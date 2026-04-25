@@ -19,6 +19,12 @@ function run_sla_escalation(mysqli $conn): void
     $ID_VERIFIED  = get_status_id_or($conn, "Verified", 7);
     $ID_ESCALATED = get_status_id_or($conn, "Escalated", 8);
 
+    // If critical statuses are missing from both DB and fallbacks, we must abort
+    if ($ID_ESCALATED === null) {
+        error_log("SLA Escalation Error: 'Escalated' status could not be found or verified.");
+        return;
+    }
+
     // Find candidates that crossed initial SLA (still pending/verified)
     $sql_init = "
         SELECT complaint_id, status_id
@@ -63,8 +69,9 @@ function run_sla_escalation(mysqli $conn): void
 /**
  * Update complaint status to escalated if not already escalated, and insert history.
  */
-function _escalate_one(mysqli $conn, int $complaint_id, int $escalated_status_id, string $remark): void
+function _escalate_one(mysqli $conn, int $complaint_id, ?int $escalated_status_id, string $remark): void
 {
+    if ($escalated_status_id === null) return;
     // Check current status (avoid double history spam)
     $stmt = $conn->prepare("SELECT status_id FROM complaints WHERE complaint_id = ? LIMIT 1");
     if (!$stmt) return;
@@ -88,8 +95,8 @@ function _escalate_one(mysqli $conn, int $complaint_id, int $escalated_status_id
 
     if (!$ok) return;
 
-    // History: updated_by = 0 means "System"
-    $hist = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, 0, ?)");
+    // History: updated_by = NULL means "System" (avoids FK violation if 0 user doesn't exist)
+    $hist = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, NULL, ?)");
     if (!$hist) return;
     $hist->bind_param("iis", $complaint_id, $escalated_status_id, $remark);
     $hist->execute();

@@ -1,17 +1,29 @@
 <?php
 include("../config/db.php");
 include("../includes/auth.php");
+require_once("../includes/status_lookup.php");
+require_once("../includes/sla_escalation.php");
 
 if ($_SESSION['role_id'] != 1) {
     header("Location: ../auth/login.php");
     exit;
 }
 
+// Auto-escalate overdue complaints (Feature #2)
+run_sla_escalation($conn);
+
 include("../includes/header.php");
 include_once("../includes/flash_messages.php");
 
 $admin_id = $_SESSION['user_id'];
 $complaint_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+
+// Status IDs (fallback to existing numeric IDs)
+$ID_PENDING   = get_status_id_or($conn, "Pending", 1);
+$ID_ASSIGNED  = get_status_id_or($conn, "Assigned", 2);
+$ID_VERIFIED  = get_status_id_or($conn, "Verified", 7);
+$ID_ESCALATED = get_status_id_or($conn, "Escalated", 8);
+$ID_REOPEN_AP = get_status_id_or($conn, "Reopened - Pending Approval", 5);
 
 // Handle Assignment Form Submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
@@ -22,19 +34,32 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
     if (mysqli_num_rows($check) > 0) {
         set_flash_message('error', 'Already assigned to this staff member.');
     } else {
+        // Ensure verified before assignment (Feature #4 + #5)
+        $curr = mysqli_query($conn, "SELECT status_id FROM complaints WHERE complaint_id='$complaint_id' LIMIT 1");
+        $curr_row = $curr ? mysqli_fetch_assoc($curr) : null;
+        $curr_status = $curr_row ? (int)$curr_row['status_id'] : null;
+
+        if ($curr_status === $ID_PENDING) {
+            set_flash_message('error', 'Please verify the complaint before assignment.');
+        } elseif ($curr_status === $ID_REOPEN_AP) {
+            set_flash_message('error', 'Reopened complaint requires approval before reassignment.');
+        } elseif (!in_array($curr_status, [$ID_VERIFIED, $ID_ESCALATED], true)) {
+            set_flash_message('error', 'Complaint is not eligible for assignment.');
+        } else {
         $q = "INSERT INTO assignments (complaint_id, staff_id, assigned_by) VALUES ('$complaint_id', '$staff_id', '$admin_id')";
         
         // Also update status to Assigned/In-Progress (Assuming ID 2)
-        $up = "UPDATE complaints SET status_id=2 WHERE complaint_id='$complaint_id' AND status_id=1";
+        $up = "UPDATE complaints SET status_id={$ID_ASSIGNED} WHERE complaint_id='$complaint_id' AND status_id IN ({$ID_VERIFIED}, {$ID_ESCALATED})";
         
         if (mysqli_query($conn, $q)) {
             mysqli_query($conn, $up);
-            mysqli_query($conn, "INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES ('$complaint_id', 2, '$admin_id', 'Assigned to staff')");
+            mysqli_query($conn, "INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES ('$complaint_id', {$ID_ASSIGNED}, '$admin_id', 'Assigned to staff')");
             set_flash_message('success', 'Complaint successfully assigned!');
             echo "<script>window.location.href='view_complaint.php?id=$complaint_id';</script>";
             exit;
         } else {
             set_flash_message('error', 'Failed to assign.');
+        }
         }
     }
 }
@@ -119,6 +144,12 @@ while ($ar = mysqli_fetch_assoc($as_res)) {
                         <label class="text-muted small fw-bold text-uppercase d-block mb-1">Service Area / Location</label>
                         <div class="fw-bold fs-6 text-dark"><?= $area_str ?></div>
                     </div>
+                    <?php if (!empty($complaint['exact_location'])): ?>
+                    <div class="col-12">
+                        <label class="text-muted small fw-bold text-uppercase d-block mb-1">Exact Location</label>
+                        <div class="fw-bold fs-6 text-dark"><?= htmlspecialchars($complaint['exact_location']) ?></div>
+                    </div>
+                    <?php endif; ?>
                 </div>
 
                 <div class="mb-4">

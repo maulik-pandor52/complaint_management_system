@@ -2,6 +2,7 @@
 include("../config/db.php");
 include("../includes/auth.php");
 include("../includes/upload_helper.php");
+require_once("../includes/status_lookup.php");
 include("../includes/header.php");
 include_once("../includes/flash_messages.php");
 
@@ -13,37 +14,89 @@ if (!isset($_SESSION['role_id']) || $_SESSION['role_id'] != 3) {
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     // Sanitize input
-    $title = mysqli_real_escape_string($conn, $_POST['title']);
-    $desc = mysqli_real_escape_string($conn, $_POST['description']);
-    $category = (int)$_POST['category'];
-    $area = (int)$_POST['area'];
-    $priority = mysqli_real_escape_string($conn, $_POST['priority']);
-    $user_id = $_SESSION['user_id'];
+    $title = trim($_POST['title'] ?? '');
+    $desc = trim($_POST['description'] ?? '');
+    $category = isset($_POST['category']) ? (int)$_POST['category'] : 0;
+    $area = isset($_POST['area']) ? (int)$_POST['area'] : 0;
+    $exact_location = trim($_POST['exact_location'] ?? '');
+    $priority = trim($_POST['priority'] ?? 'Medium');
+    $user_id = (int)($_SESSION['user_id'] ?? 0);
+
+    if ($title === '' || $desc === '' || $category <= 0 || $area <= 0 || $user_id <= 0) {
+        set_flash_message('error', 'Please fill all required fields.');
+    } else {
 
     // Calculate SLA properties based on U=38 rules (6 hours initial, 30 hours resolution)
     $initial_sla = date('Y-m-d H:i:s', strtotime('+6 hours'));
     $resolution_sla = date('Y-m-d H:i:s', strtotime('+30 hours'));
 
-    // Insert complaint with status 1 (Pending)
-    $query = "INSERT INTO complaints 
-    (title, description, category_id, area_id, user_id, priority, status_id, initial_sla_due, resolution_sla_due)
-    VALUES ('$title','$desc','$category','$area','$user_id','$priority', 1, '$initial_sla', '$resolution_sla')";
+    $ID_PENDING = get_status_id_or($conn, "Pending", 1);
 
-    if (mysqli_query($conn, $query)) {
-        $complaint_id = mysqli_insert_id($conn);
+    // Insert complaint (prepared statement) (Feature #9)
+    $stmt = $conn->prepare("
+        INSERT INTO complaints (title, description, category_id, area_id, exact_location, user_id, priority, status_id, initial_sla_due, resolution_sla_due)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+
+    if ($stmt) {
+        $stmt->bind_param(
+            "ssiisisiss",
+            $title,
+            $desc,
+            $category,
+            $area,
+            $exact_location,
+            $user_id,
+            $priority,
+            $ID_PENDING,
+            $initial_sla,
+            $resolution_sla
+        );
+        $ok = $stmt->execute();
+        $complaint_id = $ok ? (int)$stmt->insert_id : 0;
+        $stmt->close();
+
+        if ($ok && $complaint_id > 0) {
+
+        // Log initial history (Feature #3 requirement: timeline)
+        $h = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
+        if ($h) {
+            $remark = "Complaint submitted";
+            $h->bind_param("iiis", $complaint_id, $ID_PENDING, $user_id, $remark);
+            $h->execute();
+            $h->close();
+        }
 
         // File Upload
         if (!empty($_FILES['file']['name'])) {
             $upload = uploadFile($_FILES['file']);
             if ($upload['status']) {
-                $path = mysqli_real_escape_string($conn, $upload['path']);
-                mysqli_query($conn, "INSERT INTO complaint_attachments (complaint_id, file_path) VALUES ('$complaint_id','$path')");
+                $path = $upload['path'];
+
+                // Prefer new schema (attachment_type, uploaded_by). Fallback to old schema.
+                $att = $conn->prepare("INSERT INTO complaint_attachments (complaint_id, file_path, attachment_type, uploaded_by) VALUES (?, ?, 'complaint_proof', ?)");
+                if ($att) {
+                    $att->bind_param("isi", $complaint_id, $path, $user_id);
+                    $att->execute();
+                    $att->close();
+                } else {
+                    $att2 = $conn->prepare("INSERT INTO complaint_attachments (complaint_id, file_path) VALUES (?, ?)");
+                    if ($att2) {
+                        $att2->bind_param("is", $complaint_id, $path);
+                        $att2->execute();
+                        $att2->close();
+                    }
+                }
             }
         }
         
         set_flash_message('success', 'Complaint Registered Successfully! ID: #' . $complaint_id);
+        } else {
+            set_flash_message('error', 'Failed to register complaint.');
+        }
     } else {
-        set_flash_message('error', 'Error: ' . mysqli_error($conn));
+        set_flash_message('error', 'Database error while creating complaint.');
+    }
     }
 }
 ?>
@@ -101,22 +154,36 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         
                         <div class="col-md-6">
                             <div class="form-group">
-                                <label class="form-label">Location (Campus - Building - Spot)</label>
-                                <select name="area" id="area" class="form-control" required>
-                                    <option value="">Select location...</option>
+                                <label class="form-label">Location (Campus → Building → Spot)</label>
+
+                                <!-- Dependent Dropdowns (Feature #7) -->
+                                <select id="campus" class="form-control mb-2" required>
+                                    <option value="">Select Campus...</option>
                                     <?php
-                                    $area_res = mysqli_query($conn, "SELECT * FROM area_master WHERE status=1");
-                                    while ($a = mysqli_fetch_assoc($area_res)) {
-                                        $area_display = htmlspecialchars($a['level1']) . " - " . htmlspecialchars($a['level2']);
-                                        if (!empty($a['level3'])) {
-                                            $area_display .= " - " . htmlspecialchars($a['level3']);
-                                        }
-                                        echo "<option value='{$a['area_id']}'>" . $area_display . "</option>";
+                                    $campus_res = mysqli_query($conn, "SELECT DISTINCT level1 FROM area_master WHERE status=1 ORDER BY level1 ASC");
+                                    while ($row = mysqli_fetch_assoc($campus_res)) {
+                                        echo "<option value='".htmlspecialchars($row['level1'])."'>".htmlspecialchars($row['level1'])."</option>";
                                     }
                                     ?>
                                 </select>
+
+                                <select id="building" class="form-control mb-2" required disabled>
+                                    <option value="">Select Building...</option>
+                                </select>
+
+                                <!-- Final select has name='area' so backend receives area_id -->
+                                <select name="area" id="area" class="form-control" required disabled>
+                                    <option value="">Select Spot...</option>
+                                </select>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Exact Location (Feature #9) -->
+                    <div class="form-group mt-3">
+                        <label class="form-label">Exact Location Details</label>
+                        <input type="text" name="exact_location" class="form-control" placeholder="e.g. 2nd Floor, Room 203, near Lift" required>
+                        <div class="invalid-feedback">Exact location is required.</div>
                     </div>
                     
                     <div id="duplicateAlert" class="alert alert-warning d-none" role="alert">
@@ -217,6 +284,57 @@ document.addEventListener('DOMContentLoaded', function() {
     const areaSelect = document.getElementById('area');
     const dupAlert = document.getElementById('duplicateAlert');
     const dupMsg = document.getElementById('duplicateMsg');
+
+    // Dependent dropdown logic (Feature #7)
+    const campusSelect = document.getElementById('campus');
+    const buildingSelect = document.getElementById('building');
+
+    function resetSelect(select, placeholder) {
+        select.innerHTML = `<option value="">${placeholder}</option>`;
+        select.disabled = true;
+    }
+
+    campusSelect.addEventListener('change', function () {
+        resetSelect(buildingSelect, 'Select Building...');
+        resetSelect(areaSelect, 'Select Spot...');
+
+        if (!campusSelect.value) return;
+
+        fetch(`../ajax/get_buildings.php?campus=${encodeURIComponent(campusSelect.value)}`)
+            .then(r => r.json())
+            .then(json => {
+                if (!json.ok) return;
+                buildingSelect.disabled = false;
+                json.data.forEach(b => {
+                    const opt = document.createElement('option');
+                    opt.value = b;
+                    opt.textContent = b;
+                    buildingSelect.appendChild(opt);
+                });
+            })
+            .catch(err => console.error(err));
+    });
+
+    buildingSelect.addEventListener('change', function () {
+        resetSelect(areaSelect, 'Select Spot...');
+
+        if (!campusSelect.value || !buildingSelect.value) return;
+
+        fetch(`../ajax/get_spots.php?campus=${encodeURIComponent(campusSelect.value)}&building=${encodeURIComponent(buildingSelect.value)}`)
+            .then(r => r.json())
+            .then(json => {
+                if (!json.ok) return;
+                areaSelect.disabled = false;
+                json.data.forEach(item => {
+                    const label = item.spot ? item.spot : '(No spot)';
+                    const opt = document.createElement('option');
+                    opt.value = item.area_id;
+                    opt.textContent = label;
+                    areaSelect.appendChild(opt);
+                });
+            })
+            .catch(err => console.error(err));
+    });
 
     function checkDuplicate() {
         if(catSelect.value && areaSelect.value) {

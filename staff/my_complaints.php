@@ -54,7 +54,7 @@ $user_id = $_SESSION['user_id'];
                               LEFT JOIN area_master a ON c.area_id = a.area_id
                               LEFT JOIN status_master s ON c.status_id = s.status_id
                               LEFT JOIN users u ON c.user_id = u.user_id
-                              WHERE asn.staff_id = '$user_id'
+                              WHERE asn.staff_id = '$user_id' AND c.status_id <> 9
                               ORDER BY c.created_at DESC";
 
                     $res = mysqli_query($conn, $query);

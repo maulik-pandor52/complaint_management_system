@@ -17,8 +17,8 @@ $user_id = $_SESSION['user_id'];
 
 // Get counts
 $total = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE user_id='$user_id'"))['c'];
-$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE user_id='$user_id' AND status_id NOT IN (3, 4)"))['c'];
-$resolved = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE user_id='$user_id' AND status_id IN (3, 4)"))['c'];
+$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE user_id='$user_id' AND status_id NOT IN (3, 4, 9)"))['c'];
+$resolved = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE user_id='$user_id' AND status_id IN (3, 4, 9)"))['c'];
 ?>
 
 <!-- User Dashboard Header -->

@@ -17,6 +17,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         } else {
             set_flash_message('error', 'Failed to add category.');
         }
+    } elseif (isset($_POST['update'])) {
+        // Feature #8: Edit/update category
+        $id = isset($_POST['category_id']) ? (int)$_POST['category_id'] : 0;
+        $name = trim($_POST['category_name'] ?? '');
+
+        if ($id <= 0 || $name === '') {
+            set_flash_message('error', 'Invalid category update.');
+        } else {
+            $stmt = $conn->prepare("UPDATE complaint_categories SET category_name = ? WHERE category_id = ?");
+            if ($stmt) {
+                $stmt->bind_param("si", $name, $id);
+                $stmt->execute();
+                $stmt->close();
+                set_flash_message('success', 'Category updated successfully!');
+            } else {
+                set_flash_message('error', 'Database error while updating category.');
+            }
+        }
     } elseif (isset($_POST['toggle_status'])) {
         $id = (int)$_POST['category_id'];
         $curr = (int)$_POST['current_status'];
@@ -90,10 +108,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 $status_text = $is_active ? 'Active' : 'Inactive';
                                 echo "<tr>
                                         <td class='ps-4 fw-bold text-muted'>#{$r['category_id']}</td>
-                                        <td class='fw-bold'>" . htmlspecialchars($r['category_name']) . "</td>
-                                        <td><span class='badge {$status_badge} rounded-pill px-3'>{$status_text}</span></td>
-                                        <td class='text-end pe-4'>
-                                            <form method='POST' class='m-0'>
+                                    <td class='fw-bold'>" . htmlspecialchars($r['category_name']) . "</td>
+                                    <td><span class='badge {$status_badge} rounded-pill px-3'>{$status_text}</span></td>
+                                    <td class='text-end pe-4'>
+                                            <button type='button' class='btn btn-sm btn-light border rounded-pill px-3 fw-bold me-2'
+                                                data-bs-toggle='modal' data-bs-target='#editCategoryModal'
+                                                data-id='{$r['category_id']}'
+                                                data-name=\"" . htmlspecialchars($r['category_name'], ENT_QUOTES) . "\">
+                                                <i class='fas fa-pen me-1'></i> Edit
+                                            </button>
+                                            <form method='POST' class='m-0 d-inline-block'>
                                                 <input type='hidden' name='category_id' value='{$r['category_id']}'>
                                                 <input type='hidden' name='current_status' value='{$r['status']}'>
                                                 <button type='submit' name='toggle_status' class='btn btn-sm btn-light border rounded-pill px-3 fw-bold " . ($is_active ? 'text-danger confirm-action' : 'text-success') . "'
@@ -112,5 +136,43 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         </div>
     </div>
 </div>
+
+<!-- Edit Category Modal (Feature #8) -->
+<div class="modal fade" id="editCategoryModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" class="m-0">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Category</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="category_id" id="editCategoryId">
+          <div class="mb-3">
+            <label class="form-label fw-bold small">Category Name</label>
+            <input type="text" class="form-control" name="category_name" id="editCategoryName" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" name="update" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const modal = document.getElementById('editCategoryModal');
+    if (!modal) return;
+
+    modal.addEventListener('show.bs.modal', function (event) {
+        const button = event.relatedTarget;
+        document.getElementById('editCategoryId').value = button.getAttribute('data-id');
+        document.getElementById('editCategoryName').value = button.getAttribute('data-name');
+    });
+});
+</script>
 
 <?php include("../includes/footer.php"); ?>

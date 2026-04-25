@@ -18,8 +18,8 @@ include_once("../includes/flash_messages.php");
 $staff_id = $_SESSION['user_id'];
 
 // Get counts
-$total_assigned = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM assignments WHERE staff_id='$staff_id'"))['c'];
-$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints c JOIN assignments a ON c.complaint_id = a.complaint_id WHERE a.staff_id='$staff_id' AND c.status_id NOT IN (3, 4)"))['c'];
+$total_assigned = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM assignments a JOIN complaints c ON a.complaint_id = c.complaint_id WHERE a.staff_id='$staff_id' AND c.status_id <> 9"))['c'];
+$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints c JOIN assignments a ON c.complaint_id = a.complaint_id WHERE a.staff_id='$staff_id' AND c.status_id NOT IN (3, 4, 9)"))['c'];
 
 ?>
 
@@ -71,7 +71,7 @@ $pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM com
                 </thead>
                 <tbody>
                     <?php
-                    $result = mysqli_query($conn, "SELECT c.*, a.assigned_at, s.status_name FROM complaints c JOIN assignments a ON c.complaint_id = a.complaint_id LEFT JOIN status_master s ON c.status_id = s.status_id WHERE a.staff_id='$staff_id' ORDER BY a.assigned_at DESC");
+                    $result = mysqli_query($conn, "SELECT c.*, a.assigned_at, s.status_name FROM complaints c JOIN assignments a ON c.complaint_id = a.complaint_id LEFT JOIN status_master s ON c.status_id = s.status_id WHERE a.staff_id='$staff_id' AND c.status_id <> 9 ORDER BY a.assigned_at DESC");
                     if (mysqli_num_rows($result) > 0) {
                         while ($row = mysqli_fetch_assoc($result)) {
                             $due_date = !empty($row['resolution_sla_due']) ? date('M d, H:i', strtotime($row['resolution_sla_due'])) : "---";

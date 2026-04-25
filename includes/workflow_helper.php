@@ -21,17 +21,19 @@ function is_valid_status_transition(mysqli $conn, int $from_status_id, int $to_s
     $ID_REOPEN_AS = get_status_id_or($conn, "Reopened - Assigned", 6);
     $ID_VERIFIED  = get_status_id_or($conn, "Verified", 7);
     $ID_ESCALATED = get_status_id_or($conn, "Escalated", 8);
+    $ID_IN_PROGRESS = get_status_id_or($conn, "In Progress", 10);
 
     // Allowed transitions (simple version for assignment)
     $allowed = [
         $ID_PENDING   => [$ID_VERIFIED, $ID_ESCALATED],
-        $ID_VERIFIED  => [$ID_ASSIGNED, $ID_ESCALATED],
-        $ID_ASSIGNED  => [$ID_ASSIGNED, $ID_RESOLVED, $ID_ESCALATED], // allow "update remark" staying in assigned
-        $ID_ESCALATED => [$ID_ASSIGNED, $ID_RESOLVED], // can still work on escalated tickets
+        $ID_VERIFIED  => [$ID_ASSIGNED, $ID_IN_PROGRESS, $ID_RESOLVED, $ID_ESCALATED],
+        $ID_ASSIGNED  => [$ID_ASSIGNED, $ID_IN_PROGRESS, $ID_RESOLVED, $ID_ESCALATED], // allow "update remark" staying in assigned or moving to progress
+        $ID_IN_PROGRESS => [$ID_IN_PROGRESS, $ID_RESOLVED, $ID_ESCALATED],
+        $ID_ESCALATED => [$ID_ASSIGNED, $ID_IN_PROGRESS, $ID_RESOLVED], // can still work on escalated tickets
         $ID_RESOLVED  => [$ID_CLOSED, $ID_REOPEN_AP],
         $ID_CLOSED    => [$ID_REOPEN_AP],
         $ID_REOPEN_AP => [$ID_VERIFIED], // reopen approval returns to Verified
-        $ID_REOPEN_AS => [$ID_RESOLVED, $ID_ESCALATED],
+        $ID_REOPEN_AS => [$ID_IN_PROGRESS, $ID_RESOLVED, $ID_ESCALATED],
     ];
 
     // If from-status unknown, block by default
@@ -51,10 +53,12 @@ function allowed_staff_status_targets(mysqli $conn, int $current_status_id): arr
     $ID_RESOLVED  = get_status_id_or($conn, "Resolved", 3);
     $ID_ESCALATED = get_status_id_or($conn, "Escalated", 8);
     $ID_REOPEN_AS = get_status_id_or($conn, "Reopened - Assigned", 6);
+    $ID_IN_PROGRESS = get_status_id_or($conn, "In Progress", 10);
+    $ID_VERIFIED  = get_status_id_or($conn, "Verified", 7);
 
-    // Staff should mainly move work to Resolved (and can keep it Assigned).
-    if (in_array($current_status_id, [$ID_ASSIGNED, $ID_ESCALATED, $ID_REOPEN_AS], true)) {
-        return [$ID_ASSIGNED, $ID_RESOLVED];
+    // Staff can move Assigned/Reopened-Assigned/Escalated/Verified to In Progress or Resolved
+    if (in_array($current_status_id, [$ID_ASSIGNED, $ID_REOPEN_AS, $ID_ESCALATED, $ID_IN_PROGRESS, $ID_VERIFIED], true)) {
+        return [$ID_IN_PROGRESS, $ID_RESOLVED];
     }
 
     return [];

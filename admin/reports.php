@@ -1,200 +1,316 @@
 <?php
+/**
+ * ResolveX Admin Reports & Analytics
+ * Features: Avg Resolution Time (Chart), SLA Diagnostics (Cards), Category Performance Table
+ */
+
 include("../config/db.php");
 include("../includes/auth.php");
 
+// Only Admin can access
 if ($_SESSION['role_id'] != 1) {
     header("Location: ../auth/login.php");
-    exit;
+    exit();
 }
 
 include("../includes/header.php");
-include_once("../includes/flash_messages.php");
 
-// Complex queries for Reports & SLAs
-// 1. Complaints by Category
-$cat_data = [];
-$cat_res = mysqli_query($conn, "SELECT cat.category_name, COUNT(c.complaint_id) as total FROM complaints c JOIN complaint_categories cat ON c.category_id = cat.category_id GROUP BY cat.category_id");
-while($r = mysqli_fetch_assoc($cat_res)) { $cat_data[] = $r; }
+// --- 1. Fetch Analytics Data ---
 
-// 2. Complaints SLA Status (assuming 30 hours is Resolution SLA)
-$sla_passed = 0;
-$sla_within = 0;
-$sla_res = mysqli_query($conn, "SELECT created_at, status_id FROM complaints");
-while($r = mysqli_fetch_assoc($sla_res)) {  
-    if ($r['status_id'] < 5) { // Unresolved
-        $hours_passed = (time() - strtotime($r['created_at'])) / 3600;
-        if ($hours_passed > 30) { $sla_passed++; } else { $sla_within++; }
-    }
+// Resolved at subquery
+$resolved_at_cte = "(SELECT complaint_id, MIN(updated_at) as resolved_at FROM complaint_history WHERE status_id IN (3, 4) GROUP BY complaint_id)";
+
+// A. Average Resolution Time by Category (for Chart & Table)
+$perf_query = "
+    SELECT 
+        cat.category_name,
+        COALESCE(AVG(TIMESTAMPDIFF(HOUR, c.created_at, h.resolved_at)), 0) as avg_hours,
+        COUNT(c.complaint_id) as total_complaints
+    FROM complaint_categories cat
+    LEFT JOIN complaints c ON cat.category_id = c.category_id
+    LEFT JOIN $resolved_at_cte h ON c.complaint_id = h.complaint_id
+    GROUP BY cat.category_id, cat.category_name
+    ORDER BY avg_hours DESC
+";
+$perf_res = mysqli_query($conn, $perf_query);
+$chart_data = [];
+$category_stats = [];
+while ($row = mysqli_fetch_assoc($perf_res)) {
+    $chart_data[$row['category_name']] = round($row['avg_hours'], 1);
+    $category_stats[] = $row;
 }
+
+// B. SLA Health Stats
+$sql_in_sla = "SELECT COUNT(*) as c FROM complaints c JOIN $resolved_at_cte h ON c.complaint_id = h.complaint_id WHERE h.resolved_at <= c.resolution_sla_due";
+$sql_breached = "SELECT COUNT(*) as c FROM complaints c LEFT JOIN $resolved_at_cte h ON c.complaint_id = h.complaint_id WHERE (h.resolved_at IS NOT NULL AND h.resolved_at > c.resolution_sla_due) OR (h.resolved_at IS NULL AND c.status_id NOT IN (3, 4) AND NOW() > c.resolution_sla_due)";
+
+$in_sla_count = mysqli_fetch_assoc(mysqli_query($conn, $sql_in_sla))['c'];
+$breached_count = mysqli_fetch_assoc(mysqli_query($conn, $sql_breached))['c'];
+$total_sla_relevant = $in_sla_count + $breached_count;
+
+$adherence_rate = ($total_sla_relevant > 0) ? round(($in_sla_count / $total_sla_relevant) * 100, 1) : 0;
+
+// C. Active Breaches Alert (Unresolved and > 30 hours)
+$sql_active_breach = "SELECT COUNT(*) as c FROM complaints WHERE status_id NOT IN (3, 4) AND created_at < DATE_SUB(NOW(), INTERVAL 30 HOUR)";
+$active_breach_count = mysqli_fetch_assoc(mysqli_query($conn, $sql_active_breach))['c'];
 ?>
 
-<!-- Header Section -->
-<div class="d-flex justify-content-between align-items-center mb-4 mt-2">
-    <div>
-        <h2 class="mb-1">Reports & Analytics</h2>
-        <nav aria-label="breadcrumb">
-            <ol class="breadcrumb mb-0">
-                <li class="breadcrumb-item"><a href="dashboard.php">Admin Dashboard</a></li>
-                <li class="breadcrumb-item active" aria-current="page">Diagnostics Report</li>
-            </ol>
-        </nav>
-    </div>
-    <div class="d-flex gap-2">
-        <button onclick="window.print()" class="btn btn-white border rounded-pill shadow-sm px-3">
-            <i class="fas fa-print me-2 text-primary"></i>Print Report
+<div class="reports-container">
+    <div class="d-flex justify-content-between align-items-center mb-4 mt-2">
+        <div>
+            <h2 class="mb-1 text-dark fw-bold">Reports & Analytics</h2>
+            <p class="text-muted mb-0">Diagnostic overview of system performance and SLA health</p>
+        </div>
+        <button onclick="window.print()" class="btn btn-primary rounded-pill px-4 shadow-sm border-0 d-print-none">
+            <i class="fas fa-print me-2"></i>Print Report
         </button>
     </div>
-</div>
 
-<div class="row g-4">
-    <!-- Category Distribution Chart -->
-    <div class="col-xl-7 col-lg-6">
-        <div class="card shadow-sm border-0 h-100">
-            <div class="card-header bg-white border-bottom py-3">
-                <h5 class="mb-0 fw-bold"><i class="fas fa-chart-column me-2 text-primary"></i>Performance Analysis: Avg. Resolution Time</h5>
-            </div>
-            <div class="card-body">
-                <div style="height: 380px; max-width: 800px; margin: 0 auto;">
-                    <canvas id="catChart"></canvas>
+    <!-- Stats Cards Row -->
+    <div class="row g-4 mb-5">
+        <!-- SLA Adherence Rate -->
+        <div class="col-md-4">
+            <div class="stat-card accent-blue">
+                <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+                <span class="stat-value text-primary"><?= $adherence_rate ?>%</span>
+                <span class="stat-label">SLA Adherence Rate</span>
+                <div class="progress mt-3" style="height: 6px;">
+                    <div class="progress-bar bg-primary" style="width: <?= $adherence_rate ?>%"></div>
                 </div>
+            </div>
+        </div>
+        <!-- Within SLA -->
+        <div class="col-md-4">
+            <div class="stat-card accent-green">
+                <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+                <span class="stat-value text-success"><?= $in_sla_count ?></span>
+                <span class="stat-label">Complaints Within SLA</span>
+            </div>
+        </div>
+        <!-- SLA Breached -->
+        <div class="col-md-4">
+            <div class="stat-card accent-red">
+                <div class="stat-icon"><i class="fas fa-exclamation-circle"></i></div>
+                <span class="stat-value text-danger"><?= $breached_count ?></span>
+                <span class="stat-label">SLA Breached Complaints</span>
             </div>
         </div>
     </div>
 
-    <!-- SLA Breach Report -->
-    <div class="col-xl-5 col-lg-6">
-        <div class="card shadow-sm border-0 h-100 bg-light">
-            <div class="card-header bg-white border-bottom py-3">
-                <h5 class="mb-0 fw-bold text-danger"><i class="fas fa-gauge-high me-2"></i>SLA Health Diagnostics</h5>
-            </div>
-            <div class="card-body">
-                <div class="d-flex justify-content-around align-items-center text-center py-4 mb-4">
-                    <div>
-                        <div class="display-4 fw-bold text-success mb-0"><?= $sla_within ?></div>
-                        <div class="text-muted small fw-bold text-uppercase">Within Limit</div>
-                    </div>
-                    <div style="width: 1px; height: 60px; background: #cbd5e1;"></div>
-                    <div>
-                        <div class="display-4 fw-bold text-danger mb-0"><?= $sla_passed ?></div>
-                        <div class="text-muted small fw-bold text-uppercase">SLA Breached</div>
-                    </div>
-                </div>
-                
-                <div class="p-3 bg-white rounded-3 shadow-sm border-start border-4 border-danger">
-                    <p class="small text-muted mb-0">
-                        <strong>Threshold Alert:</strong> Tickets breached (30 Hrs+) must be prioritized immediately by the assigned staff to avoid system-wide escalation.
-                    </p>
-                </div>
+    <!-- Alert Message -->
+    <?php if ($active_breach_count > 0): ?>
+    <div class="alert alert-custom-breach mb-5 d-flex align-items-center animate__animated animate__pulse animate__infinite d-print-none shadow-sm">
+        <div class="alert-icon-wrap me-3">
+            <i class="fas fa-triangle-exclamation fs-4"></i>
+        </div>
+        <div>
+            <h6 class="mb-0 fw-bold">Urgent Action Required</h6>
+            <p class="mb-0 small opacity-75">There are <?= $active_breach_count ?> tickets breached (30 Hrs+) that must be prioritized immediately.</p>
+        </div>
+    </div>
+    <?php endif; ?>
 
-                <div class="mt-4">
-                    <label class="small fw-bold text-muted mb-2">SLA Adherence Rate</label>
-                    <?php 
-                        $total_tracked = ($sla_within + $sla_passed);
-                        $rate = $total_tracked > 0 ? round(($sla_within / $total_tracked) * 100, 1) : 100;
-                    ?>
-                    <div class="progress" style="height: 10px; border-radius: 5px;">
-                        <div class="progress-bar bg-<?= $rate > 80 ? 'success' : ($rate > 50 ? 'warning' : 'danger') ?>" 
-                             role="progressbar" style="width: <?= $rate ?>%" aria-valuenow="<?= $rate ?>" aria-valuemin="0" aria-valuemax="100"></div>
+    <div class="row g-4 mb-5">
+        <!-- Performance Chart -->
+        <div class="col-lg-7">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-white border-bottom py-3">
+                    <h5 class="mb-0 fw-bold"><i class="fas fa-hourglass-half me-2 text-primary"></i>Resolution Time by Category</h5>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container" style="position: relative; height:300px; width:100%">
+                        <canvas id="resolutionChart"></canvas>
                     </div>
-                    <div class="text-end small text-muted mt-1 fw-bold"><?= $rate ?>% Perfect Adherence</div>
+                </div>
+            </div>
+        </div>
+        <!-- Table Column -->
+        <div class="col-lg-5">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-white border-bottom py-3">
+                    <h5 class="mb-0 fw-bold"><i class="fas fa-table me-2 text-primary"></i>Performance Table</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table mb-0 align-middle">
+                            <thead class="bg-light">
+                                <tr>
+                                    <th class="ps-4">Category</th>
+                                    <th class="text-end pe-4">Avg. Time (Hrs)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if(empty($category_stats)): ?>
+                                    <tr><td colspan="2" class="text-center py-4 text-muted">No data available</td></tr>
+                                <?php else: ?>
+                                    <?php foreach($category_stats as $stat): ?>
+                                    <tr>
+                                        <td class="ps-4">
+                                            <div class="fw-semibold text-dark"><?= htmlspecialchars($stat['category_name'] ?: 'Uncategorized') ?></div>
+                                            <div class="small text-muted"><?= $stat['total_complaints'] ?> complaints</div>
+                                        </td>
+                                        <td class="text-end pe-4">
+                                            <span class="badge rounded-pill <?= $stat['avg_hours'] > 12 ? 'bg-danger-light text-danger' : 'bg-success-light text-success' ?> py-2 px-3 fw-bold">
+                                                <?= round($stat['avg_hours'], 1) ?> hrs
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Resolution Time Table -->
-<?php
-$avg_res_time = [];
-$avg_query = "SELECT cat.category_name, AVG(TIMESTAMPDIFF(HOUR, c.created_at, h.updated_at)) as avg_hours 
-              FROM complaints c 
-              JOIN complaint_categories cat ON c.category_id = cat.category_id 
-              JOIN complaint_history h ON c.complaint_id = h.complaint_id 
-              WHERE h.status_id IN (3, 4) 
-              GROUP BY cat.category_id";
-$avg_r = mysqli_query($conn, $avg_query);
-if ($avg_r) while($row = mysqli_fetch_assoc($avg_r)) { $avg_res_time[] = $row; }
-?>
+<style>
+/* Custom Dashboard Styles */
+.reports-container {
+    padding-bottom: 2rem;
+}
 
-<div class="card shadow-sm border-0 mt-4">
-    <div class="card-header bg-white border-bottom py-3">
-        <h5 class="mb-0 fw-bold"><i class="fas fa-hourglass-half me-2 text-primary"></i>Average Resolution Time Efficiency</h5>
-    </div>
-    <div class="card-body p-0">
-        <div class="table-container mb-0 border-0 shadow-none">
-            <table class="table mb-0">
-                <thead>
-                    <tr>
-                        <th class="ps-4">Problem Category</th>
-                        <th class="text-end pe-4">Avg. Time to Resolution</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php
-                    if (empty($avg_res_time)) {
-                        echo "<tr><td colspan='2' class='text-center py-5 text-muted'>No resolution data available for analysis.</td></tr>";
-                    } else {
-                        foreach ($avg_res_time as $avg) {
-                            $hrs = round($avg['avg_hours'], 1);
-                            echo "<tr>
-                                    <td class='ps-4 fw-semibold'>".htmlspecialchars($avg['category_name'])."</td>
-                                    <td class='text-end pe-4 fw-bold text-primary fs-5'>{$hrs} <span class='fs-7 fw-normal text-muted'>hrs</span></td>
-                                  </tr>";
-                        }
-                    }
-                    ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
+.stat-card {
+    background: #fff;
+    border-radius: 1.5rem;
+    padding: 2rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.03);
+    position: relative;
+    overflow: hidden;
+    height: 100%;
+    transition: transform 0.3s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+}
+
+.stat-icon {
+    position: absolute;
+    top: 1.5rem;
+    right: 1.5rem;
+    font-size: 2.5rem;
+    opacity: 0.1;
+}
+
+.stat-value {
+    display: block;
+    font-size: 2.5rem;
+    font-weight: 800;
+    font-family: 'Outfit', sans-serif;
+    letter-spacing: -1px;
+    margin-bottom: 0.5rem;
+}
+
+.stat-label {
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+}
+
+.accent-blue { border-bottom: 5px solid #0d6efd; }
+.accent-green { border-bottom: 5px solid #198754; }
+.accent-red { border-bottom: 5px solid #dc3545; }
+
+.alert-custom-breach {
+    background: #fff5f5;
+    border-left: 5px solid #dc3545;
+    color: #dc3545;
+    padding: 1.25rem 2rem;
+    border-radius: 1rem;
+}
+
+.alert-icon-wrap {
+    width: 50px;
+    height: 50px;
+    background: rgba(220, 53, 69, 0.1);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bg-danger-light { background-color: rgba(220, 53, 69, 0.1) !important; }
+.bg-success-light { background-color: rgba(25, 135, 84, 0.1) !important; }
+
+@media print {
+    .d-print-none { display: none !important; }
+    #wrapper { display: block !important; }
+    #page-content-wrapper { padding: 0 !important; border: 0 !important; }
+    .stat-card { box-shadow: none !important; border: 1px solid #ddd !important; }
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+    100% { transform: scale(1); }
+}
+
+.animate__pulse {
+    animation: pulse 2s infinite ease-in-out;
+}
+</style>
 
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Data for Average Resolution Time Chart
-        const avgResData = <?= json_encode($avg_res_time) ?>;
-        const labels = avgResData.map(d => d.category_name);
-        const dataVals = avgResData.map(d => Math.round(d.avg_hours * 10) / 10);
+document.addEventListener('DOMContentLoaded', function() {
+    const ctx = document.getElementById('resolutionChart').getContext('2d');
+    
+    const chartLabels = <?= json_encode(array_keys($chart_data)) ?>;
+    const chartValues = <?= json_encode(array_values($chart_data)) ?>;
+    
+    if (chartLabels.length === 0) {
+        // Show placeholder or empty state
+    }
 
-        new Chart(document.getElementById('catChart'), {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Avg. Resolution Time (Hours)',
-                    data: dataVals,
-                    backgroundColor: 'rgba(59, 130, 246, 0.6)',
-                    borderColor: '#3b82f6',
-                    borderWidth: 2,
-                    borderRadius: 8
-                }]
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: chartLabels,
+            datasets: [{
+                label: 'Avg Resolution Time (Hours)',
+                data: chartValues,
+                backgroundColor: 'rgba(13, 110, 253, 0.7)',
+                borderColor: '#0d6efd',
+                borderWidth: 2,
+                borderRadius: 10,
+                hoverBackgroundColor: 'rgba(13, 110, 253, 0.9)'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    padding: 15,
+                    backgroundColor: '#1e293b',
+                    titleFont: { size: 14, weight: 'bold' },
+                    bodyFont: { size: 13 },
+                    displayColors: false
+                }
             },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                return context.raw + ' Hours';
-                            }
-                        }
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
+                    ticks: {
+                        font: { weight: '500' },
+                        callback: function(value) { return value + 'h'; }
                     }
                 },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        title: { display: true, text: 'Hours', font: { weight: 'bold' } },
-                        grid: { borderDash: [5, 5] }
-                    },
-                    x: {
-                        grid: { display: false }
-                    }
+                x: {
+                    grid: { display: false },
+                    ticks: { font: { weight: '600' } }
                 }
             }
-        });
+        }
     });
+});
 </script>
 
 <?php include("../includes/footer.php"); ?>

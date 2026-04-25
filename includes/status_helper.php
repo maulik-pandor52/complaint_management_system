@@ -19,6 +19,7 @@ function get_status_config($status_name, $is_overdue = false) {
         case 'reopened - pending approval':
         case 'in review':
         case 'waiting':
+        case 'verified':
             return ['class' => 'status-yellow', 'icon' => 'fa-clock-rotate-left'];
         
         case 'in progress':
@@ -32,8 +33,12 @@ function get_status_config($status_name, $is_overdue = false) {
             return ['class' => 'status-green', 'icon' => 'fa-circle-check'];
         
         case 'rejected':
+        case 'declined':
         case 'urgent':
             return ['class' => 'status-red', 'icon' => 'fa-circle-xmark'];
+
+        case 'escalated':
+            return ['class' => 'status-red', 'icon' => 'fa-triangle-exclamation'];
         
         default:
             return ['class' => 'status-gray', 'icon' => 'fa-circle-question'];

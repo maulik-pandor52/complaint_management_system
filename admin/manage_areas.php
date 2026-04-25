@@ -20,6 +20,26 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         } else {
             set_flash_message('error', 'Failed to add area.');
         }
+    } elseif (isset($_POST['update'])) {
+        // Feature #8: Edit/update area
+        $id = isset($_POST['area_id']) ? (int)$_POST['area_id'] : 0;
+        $level1 = trim($_POST['level1'] ?? '');
+        $level2 = trim($_POST['level2'] ?? '');
+        $level3 = trim($_POST['level3'] ?? '');
+
+        if ($id <= 0 || $level1 === '' || $level2 === '') {
+            set_flash_message('error', 'Invalid area update.');
+        } else {
+            $stmt = $conn->prepare("UPDATE area_master SET level1 = ?, level2 = ?, level3 = ? WHERE area_id = ?");
+            if ($stmt) {
+                $stmt->bind_param("sssi", $level1, $level2, $level3, $id);
+                $stmt->execute();
+                $stmt->close();
+                set_flash_message('success', 'Area updated successfully!');
+            } else {
+                set_flash_message('error', 'Database error while updating area.');
+            }
+        }
     } elseif (isset($_POST['toggle_status'])) {
         $id = (int)$_POST['area_id'];
         $curr = (int)$_POST['current_status'];
@@ -108,6 +128,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                         </td>
                                         <td><span class='badge {$status_badge} rounded-pill px-3'>{$status_text}</span></td>
                                         <td class='text-end pe-4'>
+                                            <button type='button' class='btn btn-sm btn-light border rounded-pill px-3 fw-bold me-2'
+                                                data-bs-toggle='modal' data-bs-target='#editAreaModal'
+                                                data-id='{$r['area_id']}'
+                                                data-l1=\"" . htmlspecialchars($r['level1'], ENT_QUOTES) . "\"
+                                                data-l2=\"" . htmlspecialchars($r['level2'], ENT_QUOTES) . "\"
+                                                data-l3=\"" . htmlspecialchars($r['level3'], ENT_QUOTES) . "\">
+                                                <i class='fas fa-pen me-1'></i> Edit
+                                            </button>
                                             <form method='POST' class='m-0 d-inline-block'>
                                                 <input type='hidden' name='area_id' value='{$r['area_id']}'>
                                                 <input type='hidden' name='current_status' value='{$r['status']}'>
@@ -128,5 +156,53 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         </div>
     </div>
 </div>
+
+<!-- Edit Area Modal (Feature #8) -->
+<div class="modal fade" id="editAreaModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" class="m-0">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Area</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="area_id" id="editAreaId">
+          <div class="mb-3">
+            <label class="form-label small fw-bold">Campus (Level 1)</label>
+            <input type="text" class="form-control" name="level1" id="editLevel1" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold">Building (Level 2)</label>
+            <input type="text" class="form-control" name="level2" id="editLevel2" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold">Spot (Level 3)</label>
+            <input type="text" class="form-control" name="level3" id="editLevel3">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" name="update" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const modal = document.getElementById('editAreaModal');
+    if (!modal) return;
+
+    modal.addEventListener('show.bs.modal', function (event) {
+        const button = event.relatedTarget;
+        document.getElementById('editAreaId').value = button.getAttribute('data-id');
+        document.getElementById('editLevel1').value = button.getAttribute('data-l1');
+        document.getElementById('editLevel2').value = button.getAttribute('data-l2');
+        document.getElementById('editLevel3').value = button.getAttribute('data-l3');
+    });
+});
+</script>
 
 <?php include("../includes/footer.php"); ?>

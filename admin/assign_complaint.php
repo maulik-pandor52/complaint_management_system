@@ -25,6 +25,7 @@ $ID_REOPEN_AP  = get_status_id_or($conn, "Reopened - Pending Approval", 5);
 $ID_REOPEN_AS  = get_status_id_or($conn, "Reopened - Assigned", 6);
 $ID_VERIFIED   = get_status_id_or($conn, "Verified", 7);
 $ID_ESCALATED  = get_status_id_or($conn, "Escalated", 8);
+$ID_DECLINED   = get_status_id_or($conn, "Declined", 9);
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
     $complaint_id = (int)$_POST['complaint_id'];
@@ -155,6 +156,35 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['approve_reopen'])) {
     }
 }
 
+// Decline complaint (Feature #4)
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['decline'])) {
+    $complaint_id = (int)$_POST['complaint_id'];
+    $admin_id = $_SESSION['user_id'];
+    $reason = isset($_POST['reason']) ? trim($_POST['reason']) : 'Declined by Admin';
+
+    if (empty($reason)) $reason = 'Declined by Admin';
+
+    $stmt = $conn->prepare("UPDATE complaints SET status_id = ? WHERE complaint_id = ? AND status_id IN (?, ?)");
+    if ($stmt) {
+        $stmt->bind_param("iiii", $ID_DECLINED, $complaint_id, $ID_PENDING, $ID_REOPEN_AP);
+        $stmt->execute();
+        $changed = $stmt->affected_rows;
+        $stmt->close();
+
+        if ($changed > 0) {
+            $h = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
+            if ($h) {
+                $h->bind_param("iiis", $complaint_id, $ID_DECLINED, $admin_id, $reason);
+                $h->execute();
+                $h->close();
+            }
+            set_flash_message('success', 'Complaint declined and user notified.');
+        } else {
+            set_flash_message('error', 'Action failed. Complaint may have been updated already.');
+        }
+    }
+}
+
 // Fetch Staff List
 $staff_arr = [];
 $res_staff = mysqli_query($conn, "SELECT user_id, name FROM users WHERE role_id=2");
@@ -230,19 +260,29 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
 
                             // Actions based on status (Feature #4 + #5)
                             if ($sid === $ID_PENDING) {
-                                echo "<form method='POST' class='m-0'>
-                                        <input type='hidden' name='complaint_id' value='{$cid}'>
-                                        <button type='submit' name='verify' class='btn btn-warning btn-sm rounded-pill px-3 fw-bold confirm-action' data-confirm='Verify this complaint before assignment?'>
-                                            <i class='fas fa-check me-1'></i> Verify
+                                echo "<div class='d-flex gap-2 justify-content-end'>
+                                        <form method='POST' class='m-0'>
+                                            <input type='hidden' name='complaint_id' value='{$cid}'>
+                                            <button type='submit' name='verify' class='btn btn-warning btn-sm rounded-pill px-3 fw-bold confirm-action' data-confirm='Verify this complaint before assignment?'>
+                                                <i class='fas fa-check me-1'></i> Verify
+                                            </button>
+                                        </form>
+                                        <button type='button' class='btn btn-outline-danger btn-sm rounded-pill px-3 fw-bold' onclick='handleDecline({$cid})'>
+                                            <i class='fas fa-times me-1'></i> Decline
                                         </button>
-                                      </form>";
+                                      </div>";
                             } elseif ($sid === $ID_REOPEN_AP) {
-                                echo "<form method='POST' class='m-0'>
-                                        <input type='hidden' name='complaint_id' value='{$cid}'>
-                                        <button type='submit' name='approve_reopen' class='btn btn-info btn-sm rounded-pill px-3 fw-bold confirm-action' data-confirm='Approve this reopened complaint for reassignment?'>
-                                            <i class='fas fa-user-shield me-1'></i> Approve
+                                echo "<div class='d-flex gap-2 justify-content-end'>
+                                        <form method='POST' class='m-0'>
+                                            <input type='hidden' name='complaint_id' value='{$cid}'>
+                                            <button type='submit' name='approve_reopen' class='btn btn-info btn-sm rounded-pill px-3 fw-bold confirm-action' data-confirm='Approve this reopened complaint for reassignment?'>
+                                                <i class='fas fa-user-shield me-1'></i> Approve
+                                            </button>
+                                        </form>
+                                        <button type='button' class='btn btn-outline-danger btn-sm rounded-pill px-3 fw-bold' onclick='handleDecline({$cid})'>
+                                            <i class='fas fa-times me-1'></i> Decline
                                         </button>
-                                      </form>";
+                                      </div>";
                             } else {
                                 // Verified / Escalated -> Assign
                                 echo "<form method='POST' class='d-flex gap-2 m-0'>
@@ -278,3 +318,25 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
 </div>
 
 <?php include("../includes/footer.php"); ?>
+
+<script>
+function handleDecline(complaintId) {
+    const reason = prompt("Enter reason for declining this complaint:", "Invalid or duplicate complaint");
+    if (reason === null) return; // User cancelled
+    
+    if (reason.trim() === "") {
+        alert("A reason is mandatory for declining.");
+        return;
+    }
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.innerHTML = `
+        <input type="hidden" name="complaint_id" value="${complaintId}">
+        <input type="hidden" name="decline" value="1">
+        <input type="hidden" name="reason" value="${reason.replace(/"/g, '&quot;')}">
+    `;
+    document.body.appendChild(form);
+    form.submit();
+}
+</script>

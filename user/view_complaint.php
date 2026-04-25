@@ -1,8 +1,9 @@
 <?php
 include("../config/db.php");
 include("../includes/auth.php");
+require_once("../includes/status_lookup.php");
 
-if ($_SESSION['role_id'] != 3 && !isset($_SESSION['role_id'])) {
+if (!isset($_SESSION['role_id']) || $_SESSION['role_id'] != 3) {
     header("Location: ../auth/login.php");
     exit;
 }
@@ -14,7 +15,7 @@ $user_id = $_SESSION['user_id'];
 $complaint_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
 // Fetch complaint with joins
-$query = "SELECT c.*, cat.category_name, a.level1, a.level2, s.status_name 
+$query = "SELECT c.*, cat.category_name, a.level1, a.level2, a.level3, s.status_name 
           FROM complaints c
           LEFT JOIN complaint_categories cat ON c.category_id = cat.category_id
           LEFT JOIN area_master a ON c.area_id = a.area_id
@@ -53,16 +54,30 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['rating'])) {
 
 // Reopen Submission Logic
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
-    $reason = mysqli_real_escape_string($conn, $_POST['reopen_reason']);
-    $up1 = mysqli_query($conn, "UPDATE complaints SET status_id=5 WHERE complaint_id='$complaint_id'");
+    $reason = trim($_POST['reopen_reason'] ?? '');
+    if ($reason === '') {
+        set_flash_message('error', 'Reopen reason is required.');
+    } else {
+    $ID_REOPEN_AP = get_status_id_or($conn, "Reopened - Pending Approval", 5);
+    $ID_RESOLVED  = get_status_id_or($conn, "Resolved", 3);
+    $ID_CLOSED    = get_status_id_or($conn, "Closed", 4);
+
+    // Only allow reopen after Resolved/Closed (Feature #3 + #5)
+    if (!in_array((int)$complaint['status_id'], [$ID_RESOLVED, $ID_CLOSED], true)) {
+        set_flash_message('error', 'This complaint cannot be reopened in its current status.');
+    } else {
+    $reason_db = mysqli_real_escape_string($conn, $reason);
+    $up1 = mysqli_query($conn, "UPDATE complaints SET status_id={$ID_REOPEN_AP} WHERE complaint_id='$complaint_id'");
     // Here we can also reset the SLA or modify it if needed, but the rule didn't explicitly override math SLA so we leave SLAs intact.
-    $up2 = mysqli_query($conn, "INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES ('$complaint_id', 5, '$user_id', '$reason')");
+    $up2 = mysqli_query($conn, "INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES ('$complaint_id', {$ID_REOPEN_AP}, '$user_id', '$reason_db')");
     if($up1 && $up2) {
         set_flash_message('success', 'Complaint Reopened. It now requires Supervisor Approval (Rule U-38).');
         echo "<script>window.location.href = 'view_complaint.php?id=$complaint_id';</script>";
         exit;
     } else {
         set_flash_message('error', 'Failed to reopen complaint.');
+    }
+    }
     }
 }
 ?>
@@ -114,8 +129,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
                     </div>
                     <div class="col-md-4">
                         <label class="text-muted small fw-bold text-uppercase d-block mb-1">Location</label>
-                        <div class="fw-bold fs-6 text-dark"><?= htmlspecialchars($complaint['level1'] . " - " . $complaint['level2']) ?></div>
+                        <div class="fw-bold fs-6 text-dark">
+                            <?= htmlspecialchars($complaint['level1'] . " - " . $complaint['level2'] . (!empty($complaint['level3']) ? " - " . $complaint['level3'] : "")) ?>
+                        </div>
                     </div>
+                    <?php if (!empty($complaint['exact_location'])): ?>
+                    <div class="col-md-12 mt-2">
+                        <label class="text-muted small fw-bold text-uppercase d-block mb-1">Exact Location</label>
+                        <div class="fw-bold fs-6 text-dark"><?= htmlspecialchars($complaint['exact_location']) ?></div>
+                    </div>
+                    <?php endif; ?>
                 </div>
 
                 <div class="form-group mb-4">

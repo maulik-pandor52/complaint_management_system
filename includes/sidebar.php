@@ -26,6 +26,16 @@ function is_active($page, $current) {
                     </a>
                 </li>
                 <li>
+                    <a href="../admin/assign_complaint.php" class="<?= is_active('assign_complaint.php', $current_page) ?>">
+                        <i class="fas fa-tasks"></i> <span>Complaints Queue</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="../admin/escalated.php" class="<?= is_active('escalated.php', $current_page) ?>">
+                        <i class="fas fa-triangle-exclamation"></i> <span>Escalated</span>
+                    </a>
+                </li>
+                <li>
                     <a href="../admin/manage_users.php" class="<?= is_active('manage_users.php', $current_page) ?>">
                         <i class="fas fa-users-gear"></i> <span>Manage Users</span>
                     </a>
@@ -55,6 +65,11 @@ function is_active($page, $current) {
                 <li>
                     <a href="../staff/my_complaints.php" class="<?= is_active('my_complaints.php', $current_page) ?>">
                         <i class="fas fa-list-check"></i> <span>My Tasks</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="../staff/escalated.php" class="<?= is_active('escalated.php', $current_page) ?>">
+                        <i class="fas fa-fire-flame-curved"></i> <span>Escalated</span>
                     </a>
                 </li>
 
