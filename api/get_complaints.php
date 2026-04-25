@@ -8,7 +8,7 @@ header('Content-Type: application/json; charset=utf-8');
 // Admin can see all; Staff sees assigned; User sees own.
 if (!isset($_SESSION['role_id']) || !isset($_SESSION['user_id'])) {
     http_response_code(401);
-    echo json_encode(['ok' => false, 'message' => 'Unauthorized']);
+    echo json_encode(['ok' => false, 'message' => 'Unauthorized', 'data' => []]);
     exit;
 }
 
@@ -56,7 +56,7 @@ $params[] = $limit;
 $stmt = $conn->prepare($sql);
 if (!$stmt) {
     http_response_code(500);
-    echo json_encode(['ok' => false, 'message' => 'DB error']);
+    echo json_encode(['ok' => false, 'message' => 'Database error', 'data' => []]);
     exit;
 }
 
@@ -74,5 +74,5 @@ $data = [];
 while ($row = $res->fetch_assoc()) $data[] = $row;
 $stmt->close();
 
-echo json_encode(['ok' => true, 'data' => $data]);
+echo json_encode(['ok' => true, 'message' => 'Complaints loaded successfully.', 'data' => $data]);
 ?>

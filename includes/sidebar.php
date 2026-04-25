@@ -3,7 +3,8 @@ $current_page = basename($_SERVER['PHP_SELF']);
 $role = $_SESSION['role_id'] ?? 3;
 
 // Helper function to check active state
-function is_active($page, $current) {
+function is_active($page, $current)
+{
     return ($page == $current) ? 'active' : '';
 }
 ?>
@@ -12,14 +13,15 @@ function is_active($page, $current) {
     <div class="sidebar-header">
         <div class="logo">
             <i class="fas fa-shield-halved"></i>
-            <span>Resolve<span class="x-blue">X</span></span>
+            <span>ResovelX</span>
         </div>
     </div>
 
     <nav class="sidebar-nav">
         <div class="nav-section-label">Main Menu</div>
         <ul>
-            <?php if ($role == 1): // Admin ?>
+            <?php if ($role == 1): // Admin 
+            ?>
                 <li>
                     <a href="../admin/dashboard.php" class="<?= is_active('dashboard.php', $current_page) ?>">
                         <i class="fas fa-chart-pie"></i> <span>Dashboard</span>
@@ -56,7 +58,8 @@ function is_active($page, $current) {
                     </a>
                 </li>
 
-            <?php elseif ($role == 2): // Staff ?>
+            <?php elseif ($role == 2): // Staff 
+            ?>
                 <li>
                     <a href="../staff/dashboard.php" class="<?= is_active('dashboard.php', $current_page) ?>">
                         <i class="fas fa-chart-line"></i> <span>Dashboard</span>
@@ -73,7 +76,8 @@ function is_active($page, $current) {
                     </a>
                 </li>
 
-            <?php else: // User ?>
+            <?php else: // User 
+            ?>
                 <li>
                     <a href="../user/dashboard.php" class="<?= is_active('dashboard.php', $current_page) ?>">
                         <i class="fas fa-shapes"></i> <span>Dashboard</span>

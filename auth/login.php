@@ -1,11 +1,11 @@
 <?php
 session_start();
 include("../config/db.php");
+require_once("../includes/app_helper.php");
 
 // Redirect if already logged in
 if (isset($_SESSION['role_id'])) {
-    header("Location: ../index.php");
-    exit();
+    app_redirect('');
 }
 
 $error_msg = "";
@@ -30,6 +30,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             
             if ($row = $result->fetch_assoc()) {
                 if (password_verify($password, $row['password'])) {
+                    session_regenerate_id(true);
                     
                     // Set sessions
                     $_SESSION['user_id'] = $row['user_id'] ?? $row['id']; // fallbacks depending on schema
@@ -44,8 +45,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         setcookie("remembered_email", "", time() - 3600, "/"); 
                     }
 
-                    header("Location: ../index.php");
-                    exit();
+                    app_redirect('');
                 } else {
                     $error_msg = "Incorrect password.";
                 }
@@ -66,7 +66,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login | ResolveX</title>
+    <title>Login | <?= htmlspecialchars(app_name()) ?></title>
     <!-- Google Fonts: Outfit -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Bootstrap 5 CSS (for layout utilities) -->
@@ -114,8 +114,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <div class="login-card">
         <div class="logo-area">
             <div class="icon-box"><i class="fas fa-tower-broadcast"></i></div>
-            <h2 class="fw-bold text-dark mb-1">ResolveX</h2>
-            <p class="text-muted small">Complaint Tracking System Access</p>
+            <h2 class="fw-bold text-dark mb-1"><?= htmlspecialchars(app_name()) ?></h2>
+            <p class="text-muted small">Secure access for complaint reporting, assignment, and resolution tracking</p>
         </div>
 
         <?php if (!empty($error_msg)): ?>

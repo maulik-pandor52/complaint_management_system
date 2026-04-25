@@ -4,7 +4,9 @@
  * Auto-marks overdue complaints as "Escalated" and logs the change in complaint_history.
  */
 
+require_once __DIR__ . "/app_helper.php";
 require_once __DIR__ . "/status_lookup.php";
+require_once __DIR__ . "/sla_report_helper.php";
 
 /**
  * Escalate overdue complaints.
@@ -13,10 +15,8 @@ require_once __DIR__ . "/status_lookup.php";
 function run_sla_escalation(mysqli $conn): void
 {
     $ID_PENDING   = get_status_id_or($conn, "Pending", 1);
-    $ID_ASSIGNED  = get_status_id_or($conn, "Assigned", 2);
     $ID_RESOLVED  = get_status_id_or($conn, "Resolved", 3);
     $ID_CLOSED    = get_status_id_or($conn, "Closed", 4);
-    $ID_VERIFIED  = get_status_id_or($conn, "Verified", 7);
     $ID_ESCALATED = get_status_id_or($conn, "Escalated", 8);
 
     // If critical statuses are missing from both DB and fallbacks, we must abort
@@ -25,45 +25,39 @@ function run_sla_escalation(mysqli $conn): void
         return;
     }
 
-    // Find candidates that crossed initial SLA (still pending/verified)
-    $sql_init = "
-        SELECT complaint_id, status_id
-        FROM complaints
-        WHERE status_id IN (?, ?)
-          AND initial_sla_due IS NOT NULL
-          AND initial_sla_due < NOW()
-    ";
-    $stmt1 = $conn->prepare($sql_init);
-    if ($stmt1) {
-        $stmt1->bind_param("ii", $ID_PENDING, $ID_VERIFIED);
-        $stmt1->execute();
-        $res1 = $stmt1->get_result();
-        while ($row = $res1->fetch_assoc()) {
-            $cid = (int)$row['complaint_id'];
-            _escalate_one($conn, $cid, $ID_ESCALATED, "Auto escalation: Initial SLA breached");
-        }
-        $stmt1->close();
-    }
+    _sync_sla_deadlines($conn);
 
-    // Find candidates that crossed resolution SLA (still open)
-    $sql_res = "
-        SELECT complaint_id, status_id
-        FROM complaints
-        WHERE status_id NOT IN (?, ?, ?)
-          AND resolution_sla_due IS NOT NULL
-          AND resolution_sla_due < NOW()
-    ";
-    $stmt2 = $conn->prepare($sql_res);
-    if ($stmt2) {
-        $stmt2->bind_param("iii", $ID_RESOLVED, $ID_CLOSED, $ID_ESCALATED);
-        $stmt2->execute();
-        $res2 = $stmt2->get_result();
-        while ($row = $res2->fetch_assoc()) {
-            $cid = (int)$row['complaint_id'];
-            _escalate_one($conn, $cid, $ID_ESCALATED, "Auto escalation: Resolution SLA breached");
+    $rows = get_live_sla_report_rows($conn);
+    foreach ($rows as $row) {
+        $cid = (int)$row['complaint_id'];
+        $shouldEscalate = !empty($row['is_escalated']);
+        $currentStatusId = (int)$row['status_id'];
+
+        if ($shouldEscalate) {
+            $reason = $row['initial_status'] === 'Breached'
+                ? "Auto escalation: Initial SLA breached"
+                : "Auto escalation: Resolution SLA breached";
+            _escalate_one($conn, $cid, $ID_ESCALATED, $reason);
+        } elseif ($currentStatusId === (int)$ID_ESCALATED) {
+            _restore_false_escalation($conn, $cid, $ID_ESCALATED);
         }
-        $stmt2->close();
     }
+}
+
+function _sync_sla_deadlines(mysqli $conn): void
+{
+    $sql = "
+        UPDATE complaints
+        SET
+            initial_sla_due = DATE_ADD(created_at, INTERVAL 6 HOUR),
+            resolution_sla_due = DATE_ADD(created_at, INTERVAL 30 HOUR)
+        WHERE
+            initial_sla_due IS NULL
+            OR resolution_sla_due IS NULL
+            OR initial_sla_due <> DATE_ADD(created_at, INTERVAL 6 HOUR)
+            OR resolution_sla_due <> DATE_ADD(created_at, INTERVAL 30 HOUR)
+    ";
+    $conn->query($sql);
 }
 
 /**
@@ -103,3 +97,67 @@ function _escalate_one(mysqli $conn, int $complaint_id, ?int $escalated_status_i
     $hist->close();
 }
 
+function _restore_false_escalation(mysqli $conn, int $complaint_id, int $escalated_status_id): void
+{
+    $latestEscalation = $conn->prepare("
+        SELECT history_id, remark
+        FROM complaint_history
+        WHERE complaint_id = ? AND status_id = ?
+        ORDER BY updated_at DESC, history_id DESC
+        LIMIT 1
+    ");
+    if (!$latestEscalation) {
+        return;
+    }
+
+    $latestEscalation->bind_param("ii", $complaint_id, $escalated_status_id);
+    $latestEscalation->execute();
+    $latestRow = $latestEscalation->get_result()->fetch_assoc();
+    $latestEscalation->close();
+
+    if (!$latestRow || stripos((string)$latestRow['remark'], 'Auto escalation:') !== 0) {
+        return;
+    }
+
+    $previousStatusStmt = $conn->prepare("
+        SELECT status_id
+        FROM complaint_history
+        WHERE complaint_id = ? AND status_id <> ?
+        ORDER BY updated_at DESC, history_id DESC
+        LIMIT 1
+    ");
+    if (!$previousStatusStmt) {
+        return;
+    }
+
+    $previousStatusStmt->bind_param("ii", $complaint_id, $escalated_status_id);
+    $previousStatusStmt->execute();
+    $previousRow = $previousStatusStmt->get_result()->fetch_assoc();
+    $previousStatusStmt->close();
+
+    if (!$previousRow) {
+        return;
+    }
+
+    $previousStatusId = (int)$previousRow['status_id'];
+    $update = $conn->prepare("UPDATE complaints SET status_id = ? WHERE complaint_id = ?");
+    if (!$update) {
+        return;
+    }
+    $update->bind_param("ii", $previousStatusId, $complaint_id);
+    $ok = $update->execute();
+    $update->close();
+
+    if (!$ok) {
+        return;
+    }
+
+    $history = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, NULL, ?)");
+    if (!$history) {
+        return;
+    }
+    $remark = "Auto correction: complaint restored after SLA recalculation";
+    $history->bind_param("iis", $complaint_id, $previousStatusId, $remark);
+    $history->execute();
+    $history->close();
+}

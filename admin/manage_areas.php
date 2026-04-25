@@ -1,6 +1,7 @@
 <?php
 include("../config/db.php");
 include("../includes/auth.php");
+require_once("../includes/csrf_helper.php");
 include("../includes/header.php");
 include_once("../includes/flash_messages.php");
 
@@ -10,13 +11,21 @@ if ($_SESSION['role_id'] != 1) {
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    require_csrf_token();
     if (isset($_POST['add'])) {
-        $level1 = mysqli_real_escape_string($conn, $_POST['level1']);
-        $level2 = mysqli_real_escape_string($conn, $_POST['level2']);
-        $level3 = mysqli_real_escape_string($conn, $_POST['level3']);
-        $q = "INSERT INTO area_master (level1, level2, level3, status) VALUES ('$level1', '$level2', '$level3', 1)";
-        if (mysqli_query($conn, $q)) {
-            set_flash_message('success', 'Area added successfully!');
+        $level1 = trim($_POST['level1'] ?? '');
+        $level2 = trim($_POST['level2'] ?? '');
+        $level3 = trim($_POST['level3'] ?? '');
+
+        $stmt = $conn->prepare("INSERT INTO area_master (level1, level2, level3, status) VALUES (?, ?, ?, 1)");
+        if ($stmt) {
+            $stmt->bind_param("sss", $level1, $level2, $level3);
+            if ($stmt->execute()) {
+                set_flash_message('success', 'Area added successfully!');
+            } else {
+                set_flash_message('error', 'Failed to add area.');
+            }
+            $stmt->close();
         } else {
             set_flash_message('error', 'Failed to add area.');
         }
@@ -44,8 +53,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $id = (int)$_POST['area_id'];
         $curr = (int)$_POST['current_status'];
         $new_st = $curr == 1 ? 0 : 1;
-        if (mysqli_query($conn, "UPDATE area_master SET status='$new_st' WHERE area_id='$id'")) {
-            set_flash_message('success', 'Status toggled successfully!');
+        $stmt = $conn->prepare("UPDATE area_master SET status = ? WHERE area_id = ?");
+        if ($stmt) {
+            $stmt->bind_param("ii", $new_st, $id);
+            if ($stmt->execute()) {
+                set_flash_message('success', 'Status toggled successfully!');
+            }
+            $stmt->close();
         }
     }
 }
@@ -75,6 +89,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             </div>
             <div class="card-body">
                 <form method="POST" class="needs-validation" novalidate>
+                    <?= csrf_input() ?>
                     <div class="form-group mb-3">
                         <label class="form-label small fw-bold">Level 1 (Campus)</label>
                         <input type="text" name="level1" class="form-control" required placeholder="e.g. Main Campus">
@@ -136,7 +151,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                                 data-l3=\"" . htmlspecialchars($r['level3'], ENT_QUOTES) . "\">
                                                 <i class='fas fa-pen me-1'></i> Edit
                                             </button>
-                                            <form method='POST' class='m-0 d-inline-block'>
+                                              <form method='POST' class='m-0 d-inline-block'>
+                                                " . csrf_input() . "
                                                 <input type='hidden' name='area_id' value='{$r['area_id']}'>
                                                 <input type='hidden' name='current_status' value='{$r['status']}'>
                                                 <button type='submit' name='toggle_status' class='btn btn-sm btn-light border rounded-pill px-3 fw-bold " . ($is_active ? 'text-danger confirm-action' : 'text-success') . "' 
@@ -162,6 +178,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
   <div class="modal-dialog">
     <div class="modal-content">
       <form method="POST" class="m-0">
+        <?= csrf_input() ?>
         <div class="modal-header">
           <h5 class="modal-title">Edit Area</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>

@@ -1,6 +1,10 @@
 <?php
 include("../config/db.php");
 
+// Note for this personalized build (U = 38):
+// duplicate checking is kept as a usability feature only.
+// The mandatory special rule is supervisor approval for reopened complaints.
+
 $category = isset($_GET['category']) ? (int)$_GET['category'] : 0;
 $area = isset($_GET['area']) ? (int)$_GET['area'] : 0;
 

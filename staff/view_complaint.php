@@ -5,6 +5,7 @@ include("../includes/upload_helper.php");
 require_once("../includes/status_lookup.php");
 require_once("../includes/workflow_helper.php");
 require_once("../includes/sla_escalation.php");
+require_once("../includes/csrf_helper.php");
 
 if ($_SESSION['role_id'] != 2) {
     header("Location: ../auth/login.php");
@@ -30,19 +31,12 @@ if (mysqli_num_rows($check_assign) == 0) {
 
 // Handle Form Submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['status_id'])) {
+    require_csrf_token();
     $new_status = (int)$_POST['status_id'];
     $remark = trim($_POST['remark'] ?? '');
 
     // Fetch current status to validate transitions (Feature #3)
-    $curr_stmt = $conn->prepare("SELECT status_id FROM complaints WHERE complaint_id = ? LIMIT 1");
-    $current_status = null;
-    if ($curr_stmt) {
-        $curr_stmt->bind_param("i", $complaint_id);
-        $curr_stmt->execute();
-        $row = $curr_stmt->get_result()->fetch_assoc();
-        $current_status = $row ? (int)$row['status_id'] : null;
-        $curr_stmt->close();
-    }
+    $current_status = get_complaint_status_id($conn, $complaint_id);
 
     // Staff allowed targets (prevents invalid transitions)
     $allowed_targets = $current_status !== null ? allowed_staff_status_targets($conn, $current_status) : [];
@@ -53,23 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['status_id'])) {
     } elseif ($remark === '') {
         set_flash_message('error', 'Remark is required.');
     } else {
-        // Update complaint status (prepared statement)
-        $up1 = $conn->prepare("UPDATE complaints SET status_id = ? WHERE complaint_id = ?");
-        $ok1 = false;
-        if ($up1) {
-            $up1->bind_param("ii", $new_status, $complaint_id);
-            $ok1 = $up1->execute();
-            $up1->close();
-        }
-
-        // Insert history (prepared statement)
-        $up2 = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
-        $ok2 = false;
-        if ($up2) {
-            $up2->bind_param("iiis", $complaint_id, $new_status, $staff_id, $remark);
-            $ok2 = $up2->execute();
-            $up2->close();
-        }
+        $ok1 = update_complaint_status_with_history($conn, $complaint_id, $new_status, $staff_id, $remark);
+        $ok2 = $ok1;
 
         // Action proof upload during resolution (Feature #6)
         $ID_RESOLVED = get_status_id_or($conn, "Resolved", 3);
@@ -225,10 +204,11 @@ $complaint = mysqli_fetch_assoc($result);
     <div class="col-lg-5">
         <div class="card shadow-sm border-0 mb-4 bg-light">
             <div class="card-header bg-white border-bottom py-3">
-                <h5 class="mb-0 fw-bold"><i class="fas fa-pen-to-square me-2 text-primary"></i>Deployment Log</h5>
+                <h5 class="mb-0 fw-bold"><i class="fas fa-pen-to-square me-2 text-primary"></i>Maintenance Action Log</h5>
             </div>
             <div class="card-body">
-                <form method="POST" class="needs-validation" novalidate>
+                <form method="POST" enctype="multipart/form-data" class="needs-validation" novalidate>
+                    <?= csrf_input() ?>
                     <div class="form-group mb-4">
                         <label class="form-label small fw-bold text-uppercase text-muted">Update Progress Status</label>
                         <select name="status_id" class="form-control" required>

@@ -1,11 +1,3 @@
-/* 
-    ========================================================
-    RESOLVEX - MODERN COMPLAINT MANAGEMENT SYSTEM
-    Step 3: Global Styling (CSS)
-    Clean, Modern, Responsive Design
-    ========================================================
-*/
-
 /* --- 1. Reset Defaults --- */
 * {
     box-sizing: border-box;
@@ -549,6 +541,7 @@ main.container-fluid {
     background: rgba(0, 0, 0, 0.5);
     z-index: 999;
     display: none;
+    -webkit-backdrop-filter: blur(2px);
     backdrop-filter: blur(2px);
 }
 

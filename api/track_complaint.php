@@ -21,7 +21,7 @@ $complaint_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
 if ($complaint_id <= 0) {
     http_response_code(400);
-    echo json_encode(['ok' => false, 'message' => 'id is required']);
+    echo json_encode(['ok' => false, 'message' => 'Complaint id is required', 'data' => null]);
     exit;
 }
 
@@ -30,7 +30,7 @@ if ($role_id === 2) {
     $chk = $conn->prepare("SELECT 1 FROM assignments WHERE complaint_id = ? AND staff_id = ? LIMIT 1");
     if (!$chk) {
         http_response_code(500);
-        echo json_encode(['ok' => false, 'message' => 'DB error']);
+        echo json_encode(['ok' => false, 'message' => 'Database error', 'data' => null]);
         exit;
     }
     $chk->bind_param("ii", $complaint_id, $user_id);
@@ -39,14 +39,14 @@ if ($role_id === 2) {
     $chk->close();
     if (!$allowed) {
         http_response_code(403);
-        echo json_encode(['ok' => false, 'message' => 'Not assigned']);
+        echo json_encode(['ok' => false, 'message' => 'Not assigned to this complaint', 'data' => null]);
         exit;
     }
 } elseif ($role_id === 3) {
     $chk = $conn->prepare("SELECT 1 FROM complaints WHERE complaint_id = ? AND user_id = ? LIMIT 1");
     if (!$chk) {
         http_response_code(500);
-        echo json_encode(['ok' => false, 'message' => 'DB error']);
+        echo json_encode(['ok' => false, 'message' => 'Database error', 'data' => null]);
         exit;
     }
     $chk->bind_param("ii", $complaint_id, $user_id);
@@ -55,7 +55,7 @@ if ($role_id === 2) {
     $chk->close();
     if (!$allowed) {
         http_response_code(403);
-        echo json_encode(['ok' => false, 'message' => 'Forbidden']);
+        echo json_encode(['ok' => false, 'message' => 'Forbidden', 'data' => null]);
         exit;
     }
 }
@@ -74,7 +74,7 @@ $sql = "
 $stmt = $conn->prepare($sql);
 if (!$stmt) {
     http_response_code(500);
-    echo json_encode(['ok' => false, 'message' => 'DB error']);
+    echo json_encode(['ok' => false, 'message' => 'Database error', 'data' => null]);
     exit;
 }
 $stmt->bind_param("i", $complaint_id);
@@ -84,7 +84,7 @@ $stmt->close();
 
 if (!$complaint) {
     http_response_code(404);
-    echo json_encode(['ok' => false, 'message' => 'Not found']);
+    echo json_encode(['ok' => false, 'message' => 'Complaint not found', 'data' => null]);
     exit;
 }
 
@@ -128,8 +128,10 @@ if ($hist_stmt) {
 
 echo json_encode([
     'ok' => true,
-    'complaint' => $complaint,
-    'attachments' => $attachments,
-    'history' => $history
+    'message' => 'Complaint details loaded successfully.',
+    'data' => [
+        'complaint' => $complaint,
+        'attachments' => $attachments,
+        'history' => $history,
+    ]
 ]);
-

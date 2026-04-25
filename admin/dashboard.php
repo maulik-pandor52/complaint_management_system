@@ -13,10 +13,10 @@ run_sla_escalation($conn);
 
 // Stats
 $total = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints"))['c'];
-$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE status_id IN (1, 5)"))['c'];
-$resolved = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE status_id IN (3, 4)"))['c'];
+$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE status_id IN (1, 2, 5, 6 , 7, 10)"))['c'];
+$resolved = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE status_id IN (3, 4, 8, 9)"))['c'];
 
-include("../includes/header.php");
+include("../includes/header.php");  
 ?>
 
 <!-- Dashboard Header -->

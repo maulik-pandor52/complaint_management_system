@@ -1,15 +1,16 @@
 <?php
 session_start();
+require_once __DIR__ . '/includes/app_helper.php';
 
 if (!isset($_SESSION['role_id'])) {
-    header("Location: auth/login.php");
+    app_redirect('auth/login.php');
 }
 
 if ($_SESSION['role_id'] == 1) {
-    header("Location: admin/dashboard.php");
+    app_redirect('admin/dashboard.php');
 } elseif ($_SESSION['role_id'] == 2) {
-    header("Location: staff/dashboard.php");
+    app_redirect('staff/dashboard.php');
 } else {
-    header("Location: user/dashboard.php");
+    app_redirect('user/dashboard.php');
 }
 ?>

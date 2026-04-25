@@ -2,6 +2,8 @@
 include("../config/db.php");
 include("../includes/auth.php");
 require_once("../includes/status_lookup.php");
+require_once("../includes/workflow_helper.php");
+require_once("../includes/csrf_helper.php");
 
 if (!isset($_SESSION['role_id']) || $_SESSION['role_id'] != 3) {
     header("Location: ../auth/login.php");
@@ -20,40 +22,57 @@ $query = "SELECT c.*, cat.category_name, a.level1, a.level2, a.level3, s.status_
           LEFT JOIN complaint_categories cat ON c.category_id = cat.category_id
           LEFT JOIN area_master a ON c.area_id = a.area_id
           LEFT JOIN status_master s ON c.status_id = s.status_id
-          WHERE c.complaint_id = '$complaint_id' AND c.user_id = '$user_id'";
+          WHERE c.complaint_id = ? AND c.user_id = ?
+          LIMIT 1";
+$stmt = $conn->prepare($query);
+$complaint = null;
+if ($stmt) {
+    $stmt->bind_param("ii", $complaint_id, $user_id);
+    $stmt->execute();
+    $complaint = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+}
 
-$result = mysqli_query($conn, $query);
-
-if (mysqli_num_rows($result) == 0) {
+if (!$complaint) {
     echo "<div class='content-area'><p>Complaint not found or you don't have permission to view it.</p></div>";
     include("../includes/footer.php");
     exit;
 }
 
-$complaint = mysqli_fetch_assoc($result);
-
 // Feedback submission logic
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['rating'])) {
+    require_csrf_token();
     $rating = (int)$_POST['rating'];
-    $comments = mysqli_real_escape_string($conn, $_POST['comments']);
+    $comments = trim($_POST['comments'] ?? '');
     
     // Check if feedback already provided
-    $check_fb = mysqli_query($conn, "SELECT * FROM feedback WHERE complaint_id = '$complaint_id'");
-    if (mysqli_num_rows($check_fb) == 0) {
-        $fb_query = "INSERT INTO feedback (complaint_id, rating, comments) VALUES ('$complaint_id', '$rating', '$comments')";
-        if(mysqli_query($conn, $fb_query)) {
-            set_flash_message('success', 'Thank you for your feedback!');
-            // Reload page to avoid resubmission
-            echo "<script>window.location.href = 'view_complaint.php?id=$complaint_id';</script>";
-            exit;
-        } else {
-            set_flash_message('error', 'Failed to submit feedback.');
+    $check_fb = $conn->prepare("SELECT feedback_id FROM feedback WHERE complaint_id = ? LIMIT 1");
+    $existing_feedback = false;
+    if ($check_fb) {
+        $check_fb->bind_param("i", $complaint_id);
+        $check_fb->execute();
+        $existing_feedback = (bool)$check_fb->get_result()->fetch_assoc();
+        $check_fb->close();
+    }
+    if (!$existing_feedback) {
+        $fb_query = $conn->prepare("INSERT INTO feedback (complaint_id, rating, comments) VALUES (?, ?, ?)");
+        if($fb_query) {
+            $fb_query->bind_param("iis", $complaint_id, $rating, $comments);
+            if ($fb_query->execute()) {
+                set_flash_message('success', 'Thank you for your feedback!');
+                $fb_query->close();
+                echo "<script>window.location.href = 'view_complaint.php?id=$complaint_id';</script>";
+                exit;
+            }
+            $fb_query->close();
         }
+        set_flash_message('error', 'Failed to submit feedback.');
     }
 }
 
 // Reopen Submission Logic
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
+    require_csrf_token();
     $reason = trim($_POST['reopen_reason'] ?? '');
     if ($reason === '') {
         set_flash_message('error', 'Reopen reason is required.');
@@ -66,11 +85,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
     if (!in_array((int)$complaint['status_id'], [$ID_RESOLVED, $ID_CLOSED], true)) {
         set_flash_message('error', 'This complaint cannot be reopened in its current status.');
     } else {
-    $reason_db = mysqli_real_escape_string($conn, $reason);
-    $up1 = mysqli_query($conn, "UPDATE complaints SET status_id={$ID_REOPEN_AP} WHERE complaint_id='$complaint_id'");
-    // Here we can also reset the SLA or modify it if needed, but the rule didn't explicitly override math SLA so we leave SLAs intact.
-    $up2 = mysqli_query($conn, "INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES ('$complaint_id', {$ID_REOPEN_AP}, '$user_id', '$reason_db')");
-    if($up1 && $up2) {
+    if(update_complaint_status_with_history($conn, $complaint_id, $ID_REOPEN_AP, $user_id, $reason)) {
         set_flash_message('success', 'Complaint Reopened. It now requires Supervisor Approval (Rule U-38).');
         echo "<script>window.location.href = 'view_complaint.php?id=$complaint_id';</script>";
         exit;
@@ -149,19 +164,29 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
                 </div>
 
                 <?php
-                $att_res = mysqli_query($conn, "SELECT * FROM complaint_attachments WHERE complaint_id='$complaint_id'");
-                if(mysqli_num_rows($att_res) > 0) {
+                $attachments = [];
+                $att_stmt = $conn->prepare("SELECT * FROM complaint_attachments WHERE complaint_id = ?");
+                if ($att_stmt) {
+                    $att_stmt->bind_param("i", $complaint_id);
+                    $att_stmt->execute();
+                    $att_res = $att_stmt->get_result();
+                    while ($att_row = mysqli_fetch_assoc($att_res)) {
+                        $attachments[] = $att_row;
+                    }
+                    $att_stmt->close();
+                }
+                if(!empty($attachments)) {
                     ?>
                     <hr class="my-4">
                     <div class="mt-2">
                         <label class="text-muted small fw-bold text-uppercase d-block mb-2">Attached Evidence</label>
                         <div class="d-flex flex-wrap gap-2">
-                            <?php while($att = mysqli_fetch_assoc($att_res)): 
+                            <?php foreach($attachments as $att): 
                                 $filename = basename($att['file_path']); ?>
                                 <a href="../<?= $att['file_path'] ?>" target="_blank" class="btn btn-outline-primary btn-sm rounded-pill px-3">
                                     <i class="fas fa-paperclip me-2"></i><?= $filename ?>
                                 </a>
-                            <?php endwhile; ?>
+                            <?php endforeach; ?>
                         </div>
                     </div>
                     <?php
@@ -178,9 +203,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
                         <div class="card-body p-4">
                             <h5 class="fw-bold text-primary mb-3"><i class="fas fa-star me-2"></i>Service Feedback</h5>
                             <?php
-                            $check_fb = mysqli_query($conn, "SELECT * FROM feedback WHERE complaint_id = '$complaint_id'");
-                            if (mysqli_num_rows($check_fb) == 0): ?>
+                            $feedback_stmt = $conn->prepare("SELECT * FROM feedback WHERE complaint_id = ? LIMIT 1");
+                            $fb = null;
+                            if ($feedback_stmt) {
+                                $feedback_stmt->bind_param("i", $complaint_id);
+                                $feedback_stmt->execute();
+                                $fb = $feedback_stmt->get_result()->fetch_assoc();
+                                $feedback_stmt->close();
+                            }
+                            if (!$fb): ?>
                                 <form method="POST">
+                                    <?= csrf_input() ?>
                                     <p class="small text-dark opacity-75 mb-3">This complaint is resolved. How was your experience?</p>
                                     <div class="mb-3">
                                         <select name="rating" class="form-control" required>
@@ -196,8 +229,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
                                     </div>
                                     <button type="submit" class="btn btn-primary rounded-pill px-4 fw-bold w-100">Submit Rating</button>
                                 </form>
-                            <?php else: 
-                                $fb = mysqli_fetch_assoc($check_fb); ?>
+                            <?php else: ?>
                                 <div class="d-flex align-items-center gap-3 mb-2">
                                     <div class="fs-4 fw-bold text-primary"><?= $fb['rating'] ?>.0</div>
                                     <div class="text-warning">
@@ -222,6 +254,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
                     <h6 class="fw-bold text-danger mb-2"><i class="fas fa-lock-open me-2"></i>Unsatisfied?</h6>
                     <p class="small text-danger opacity-75 mb-3">You can request to reopen this case if the resolution was incomplete.</p>
                     <form method="POST">
+                        <?= csrf_input() ?>
                         <textarea name="reopen_reason" rows="2" class="form-control mb-3 border-danger bg-white" placeholder="Reason for reopening..." required></textarea>
                         <div class="alert alert-info py-2 small mb-3 border-0">
                             <i class="fas fa-user-shield me-2"></i>Note: Case will require <strong>Supervisor Approval</strong>.
@@ -246,10 +279,20 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
                     </div>
 
                     <?php
-                    $history_res = mysqli_query($conn, "SELECT h.*, s.status_name, u.name as actor_name FROM complaint_history h LEFT JOIN status_master s ON h.status_id = s.status_id LEFT JOIN users u ON h.updated_by = u.user_id WHERE h.complaint_id = '$complaint_id' ORDER BY h.updated_at ASC");
-                    $h_count = mysqli_num_rows($history_res);
+                    $history_rows = [];
+                    $history_stmt = $conn->prepare("SELECT h.*, s.status_name, u.name as actor_name FROM complaint_history h LEFT JOIN status_master s ON h.status_id = s.status_id LEFT JOIN users u ON h.updated_by = u.user_id WHERE h.complaint_id = ? ORDER BY h.updated_at ASC");
+                    if ($history_stmt) {
+                        $history_stmt->bind_param("i", $complaint_id);
+                        $history_stmt->execute();
+                        $history_res = $history_stmt->get_result();
+                        while ($history_row = mysqli_fetch_assoc($history_res)) {
+                            $history_rows[] = $history_row;
+                        }
+                        $history_stmt->close();
+                    }
+                    $h_count = count($history_rows);
                     $idx = 0;
-                    while($h = mysqli_fetch_assoc($history_res)): 
+                    foreach($history_rows as $h): 
                         $idx++;
                         $is_last = ($idx == $h_count);
                         $dot_color = ($h['status_id'] >= 3) ? 'success' : 'primary';
@@ -262,7 +305,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reopen'])) {
                                 <div class="bg-light p-2 rounded small text-muted fs-7"><?= htmlspecialchars($h['remark']) ?></div>
                             <?php endif; ?>
                         </div>
-                    <?php endwhile; ?>
+                    <?php endforeach; ?>
                 </div>
             </div>
         </div>

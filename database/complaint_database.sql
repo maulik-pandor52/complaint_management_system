@@ -1,4 +1,4 @@
--- Complaint Management System (ResolveX)
+-- Building Maintenance Complaint and Resolution Tracking System
 -- Student Enrollment: 230210107038 (U=38)
 -- Tech: PHP + MySQL
 --
@@ -68,7 +68,9 @@ INSERT INTO `status_master` (`status_id`, `status_name`) VALUES
 (5, 'Reopened - Pending Approval'),
 (6, 'Reopened - Assigned'),
 (7, 'Verified'),
-(8, 'Escalated')
+(8, 'Escalated'),
+(9, 'Declined'),
+(10, 'In Progress')
 ON DUPLICATE KEY UPDATE status_name = VALUES(status_name);
 
 -- -----------------------------
@@ -82,6 +84,17 @@ CREATE TABLE `complaint_categories` (
   PRIMARY KEY (`category_id`),
   KEY `idx_category_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO `complaint_categories` (`category_id`, `category_name`, `status`) VALUES
+(1, 'Plumbing Leakage', 1),
+(2, 'Broken Doors/Windows', 1),
+(3, 'Wall Cracks', 1),
+(4, 'Ceiling Damage', 1),
+(5, 'Paint / Tile Repair', 1),
+(6, 'Washroom Fixture Damage', 1)
+ON DUPLICATE KEY UPDATE
+  `category_name` = VALUES(`category_name`),
+  `status` = VALUES(`status`);
 
 -- -----------------------------
 -- Area Master (A=2: Campus -> Building -> Spot)
@@ -97,6 +110,19 @@ CREATE TABLE `area_master` (
   KEY `idx_area_status` (`status`),
   KEY `idx_area_l1_l2` (`level1`, `level2`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO `area_master` (`area_id`, `level1`, `level2`, `level3`, `status`) VALUES
+(1, 'Main Campus', 'Block A', 'Classroom 101', 1),
+(2, 'Main Campus', 'Block A', 'Classroom 102', 1),
+(3, 'Main Campus', 'Block B', 'Washroom 1', 1),
+(4, 'Main Campus', 'Block B', 'Seminar Hall', 1),
+(5, 'Main Campus', 'Admin Block', 'Office 2', 1),
+(6, 'Main Campus', 'Library Block', 'Reading Hall', 1)
+ON DUPLICATE KEY UPDATE
+  `level1` = VALUES(`level1`),
+  `level2` = VALUES(`level2`),
+  `level3` = VALUES(`level3`),
+  `status` = VALUES(`status`);
 
 -- -----------------------------
 -- Complaints
@@ -193,4 +219,3 @@ CREATE TABLE `feedback` (
   UNIQUE KEY `uq_feedback_once` (`complaint_id`),
   CONSTRAINT `fk_feedback_complaint` FOREIGN KEY (`complaint_id`) REFERENCES `complaints` (`complaint_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-

@@ -8,7 +8,7 @@ header('Content-Type: application/json; charset=utf-8');
 // Only Admin for analytics API (simple security rule)
 if (!isset($_SESSION['role_id']) || (int)$_SESSION['role_id'] !== 1) {
     http_response_code(403);
-    echo json_encode(['ok' => false, 'message' => 'Forbidden']);
+    echo json_encode(['ok' => false, 'message' => 'Forbidden', 'data' => []]);
     exit;
 }
 
@@ -34,7 +34,7 @@ $sql = "
 $stmt = $conn->prepare($sql);
 if (!$stmt) {
     http_response_code(500);
-    echo json_encode(['ok' => false, 'message' => 'DB error']);
+    echo json_encode(['ok' => false, 'message' => 'Database error', 'data' => []]);
     exit;
 }
 
@@ -55,4 +55,4 @@ while ($row = $res->fetch_assoc()) {
 }
 $stmt->close();
 
-echo json_encode(['ok' => true, 'data' => $data]);
+echo json_encode(['ok' => true, 'message' => 'Category summary loaded successfully.', 'data' => $data]);

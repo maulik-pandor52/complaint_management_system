@@ -1,6 +1,7 @@
 <?php
 include("../config/db.php");
 include("../includes/auth.php");
+require_once("../includes/csrf_helper.php");
 include("../includes/header.php");
 include_once("../includes/flash_messages.php");
 
@@ -10,21 +11,41 @@ if ($_SESSION['role_id'] != 1) {
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['add_user'])) {
-    $name = mysqli_real_escape_string($conn, $_POST['name']);
-    $email = mysqli_real_escape_string($conn, $_POST['email']);
-    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+    require_csrf_token();
+    $name = trim($_POST['name'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $passwordPlain = $_POST['password'] ?? '';
     $role = (int)$_POST['role_id'];
-    
-    // Check if email exists
-    $check = mysqli_query($conn, "SELECT email FROM users WHERE email='$email'");
-    if (mysqli_num_rows($check) > 0) {
-        set_flash_message('error', 'Email already in use.');
+
+    if ($name === '' || $email === '' || $passwordPlain === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        set_flash_message('error', 'Please enter valid user details.');
     } else {
-        $q = "INSERT INTO users (name, email, password, role_id) VALUES ('$name', '$email', '$password', '$role')";
-        if (mysqli_query($conn, $q)) {
-            set_flash_message('success', 'User added successfully!');
+        $password = password_hash($passwordPlain, PASSWORD_DEFAULT);
+        $check = $conn->prepare("SELECT email FROM users WHERE email = ? LIMIT 1");
+        if (!$check) {
+            set_flash_message('error', 'Unable to validate email right now.');
         } else {
-            set_flash_message('error', 'Failed to add user.');
+            $check->bind_param("s", $email);
+            $check->execute();
+            $exists = $check->get_result()->fetch_assoc();
+            $check->close();
+
+            if ($exists) {
+                set_flash_message('error', 'Email already in use.');
+            } else {
+                $insert = $conn->prepare("INSERT INTO users (name, email, password, role_id) VALUES (?, ?, ?, ?)");
+                if ($insert) {
+                    $insert->bind_param("sssi", $name, $email, $password, $role);
+                    if ($insert->execute()) {
+                        set_flash_message('success', 'User added successfully!');
+                    } else {
+                        set_flash_message('error', 'Failed to add user.');
+                    }
+                    $insert->close();
+                } else {
+                    set_flash_message('error', 'Failed to add user.');
+                }
+            }
         }
     }
 }
@@ -54,13 +75,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['add_user'])) {
             </div>
             <div class="card-body">
                 <form method="POST" class="needs-validation" novalidate>
+                    <?= csrf_input() ?>
                     <div class="form-group mb-3">
                         <label class="form-label small fw-bold">Full Name</label>
                         <input type="text" name="name" class="form-control" required placeholder="Enter name">
                     </div>
                     <div class="form-group mb-3">
                         <label class="form-label small fw-bold">Email Address</label>
-                        <input type="email" name="email" class="form-control" required placeholder="user@resolvex.com">
+                        <input type="email" name="email" class="form-control" required placeholder="user@example.com">
                     </div>
                     <div class="form-group mb-3">
                         <label class="form-label small fw-bold">Temporary Password</label>

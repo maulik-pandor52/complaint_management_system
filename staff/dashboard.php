@@ -77,7 +77,7 @@ $pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM com
                             $due_date = !empty($row['resolution_sla_due']) ? date('M d, H:i', strtotime($row['resolution_sla_due'])) : "---";
                             $is_late = (!empty($row['resolution_sla_due']) && strtotime($row['resolution_sla_due']) < time() && $row['status_id'] < 3);
                             $badge_class = "badge-" . strtolower(str_replace(' ', '-', $row['status_name']));
-                            
+
                             echo "<tr>
                                     <td class='ps-4 fw-bold text-muted'>#{$row['complaint_id']}</td>
                                     <td>

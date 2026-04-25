@@ -64,3 +64,103 @@ function allowed_staff_status_targets(mysqli $conn, int $current_status_id): arr
     return [];
 }
 
+/**
+ * Get a complaint's current status id.
+ */
+function get_complaint_status_id(mysqli $conn, int $complaint_id): ?int
+{
+    $stmt = $conn->prepare("SELECT status_id FROM complaints WHERE complaint_id = ? LIMIT 1");
+    if (!$stmt) {
+        return null;
+    }
+
+    $stmt->bind_param("i", $complaint_id);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return $row ? (int)$row['status_id'] : null;
+}
+
+/**
+ * Verify that a complaint is assigned to the given staff member.
+ */
+function is_assigned_to_staff(mysqli $conn, int $complaint_id, int $staff_id): bool
+{
+    $stmt = $conn->prepare("SELECT 1 FROM assignments WHERE complaint_id = ? AND staff_id = ? LIMIT 1");
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param("ii", $complaint_id, $staff_id);
+    $stmt->execute();
+    $assigned = (bool)$stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return $assigned;
+}
+
+/**
+ * Insert complaint history in a single shared place.
+ */
+function add_complaint_history(mysqli $conn, int $complaint_id, int $status_id, ?int $updated_by, string $remark): bool
+{
+    $stmt = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param("iiis", $complaint_id, $status_id, $updated_by, $remark);
+    $ok = $stmt->execute();
+    $stmt->close();
+
+    return $ok;
+}
+
+/**
+ * Update complaint status and insert history as one transaction-safe action.
+ */
+function update_complaint_status_with_history(mysqli $conn, int $complaint_id, int $status_id, ?int $updated_by, string $remark): bool
+{
+    $conn->begin_transaction();
+
+    try {
+        $existsStmt = $conn->prepare("SELECT complaint_id FROM complaints WHERE complaint_id = ? LIMIT 1");
+        if (!$existsStmt) {
+            throw new RuntimeException('Unable to verify complaint before update.');
+        }
+        $existsStmt->bind_param("i", $complaint_id);
+        $existsStmt->execute();
+        $existsRow = $existsStmt->get_result()->fetch_assoc();
+        $existsStmt->close();
+
+        if (!$existsRow) {
+            throw new RuntimeException('Complaint does not exist for update.');
+        }
+
+        $stmt = $conn->prepare("UPDATE complaints SET status_id = ? WHERE complaint_id = ?");
+        if (!$stmt) {
+            throw new RuntimeException('Unable to prepare complaint update.');
+        }
+
+        $stmt->bind_param("ii", $status_id, $complaint_id);
+        $ok = $stmt->execute();
+        $stmtError = $stmt->error;
+        $stmt->close();
+
+        if (!$ok) {
+            throw new RuntimeException('Unable to update complaint status. ' . $stmtError);
+        }
+
+        if (!add_complaint_history($conn, $complaint_id, $status_id, $updated_by, $remark)) {
+            throw new RuntimeException('Unable to write complaint history. ' . $conn->error);
+        }
+
+        $conn->commit();
+        return true;
+    } catch (Throwable $e) {
+        $conn->rollback();
+        error_log('Workflow update failed: ' . $e->getMessage());
+        return false;
+    }
+}

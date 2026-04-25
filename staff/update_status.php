@@ -2,6 +2,7 @@
 include("../config/db.php");
 include("../includes/auth.php");
 require_once("../includes/workflow_helper.php");
+require_once("../includes/csrf_helper.php");
 
 if (!isset($_SESSION['role_id']) || $_SESSION['role_id'] != 2) {
     http_response_code(403);
@@ -14,6 +15,12 @@ $status = isset($_POST['status']) ? (int)$_POST['status'] : 0;
 $remark = trim($_POST['remark'] ?? '');
 $user_id = (int)($_SESSION['user_id'] ?? 0);
 
+if (!is_valid_csrf_token($_POST['csrf_token'] ?? null)) {
+    http_response_code(419);
+    echo "Invalid request token";
+    exit;
+}
+
 if ($complaint_id <= 0 || $status <= 0 || $remark === '') {
     http_response_code(400);
     echo "Invalid request";
@@ -21,29 +28,14 @@ if ($complaint_id <= 0 || $status <= 0 || $remark === '') {
 }
 
 // Must be assigned to this staff
-$chk = $conn->prepare("SELECT 1 FROM assignments WHERE complaint_id = ? AND staff_id = ? LIMIT 1");
-if ($chk) {
-    $chk->bind_param("ii", $complaint_id, $user_id);
-    $chk->execute();
-    $row = $chk->get_result()->fetch_assoc();
-    $chk->close();
-    if (!$row) {
-        http_response_code(403);
-        echo "Not assigned";
-        exit;
-    }
+if (!is_assigned_to_staff($conn, $complaint_id, $user_id)) {
+    http_response_code(403);
+    echo "Not assigned";
+    exit;
 }
 
 // Validate transition
-$curr = $conn->prepare("SELECT status_id FROM complaints WHERE complaint_id = ? LIMIT 1");
-$current_status = null;
-if ($curr) {
-    $curr->bind_param("i", $complaint_id);
-    $curr->execute();
-    $row = $curr->get_result()->fetch_assoc();
-    $current_status = $row ? (int)$row['status_id'] : null;
-    $curr->close();
-}
+$current_status = get_complaint_status_id($conn, $complaint_id);
 if ($current_status === null) {
     http_response_code(404);
     echo "Not found";
@@ -57,20 +49,10 @@ if (!in_array($status, $allowed, true)) {
     exit;
 }
 
-// Update status
-$up = $conn->prepare("UPDATE complaints SET status_id = ? WHERE complaint_id = ?");
-if ($up) {
-    $up->bind_param("ii", $status, $complaint_id);
-    $up->execute();
-    $up->close();
-}
-
-// Insert history
-$hist = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
-if ($hist) {
-    $hist->bind_param("iiis", $complaint_id, $status, $user_id, $remark);
-    $hist->execute();
-    $hist->close();
+if (!update_complaint_status_with_history($conn, $complaint_id, $status, $user_id, $remark)) {
+    http_response_code(500);
+    echo "Unable to update status";
+    exit;
 }
 
 echo "Status Updated!";

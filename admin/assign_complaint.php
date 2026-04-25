@@ -4,6 +4,7 @@ include("../includes/auth.php");
 require_once("../includes/status_lookup.php");
 require_once("../includes/workflow_helper.php");
 require_once("../includes/sla_escalation.php");
+require_once("../includes/csrf_helper.php");
 
 if ($_SESSION['role_id'] != 1) {
     header("Location: ../auth/login.php");
@@ -28,20 +29,13 @@ $ID_ESCALATED  = get_status_id_or($conn, "Escalated", 8);
 $ID_DECLINED   = get_status_id_or($conn, "Declined", 9);
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
+    require_csrf_token();
     $complaint_id = (int)$_POST['complaint_id'];
     $staff_id = (int)$_POST['staff_id'];
     $admin_id = $_SESSION['user_id'];
 
     // Re-check current status (Feature #4 + #5)
-    $curr_stmt = $conn->prepare("SELECT status_id FROM complaints WHERE complaint_id = ? LIMIT 1");
-    $curr_status = null;
-    if ($curr_stmt) {
-        $curr_stmt->bind_param("i", $complaint_id);
-        $curr_stmt->execute();
-        $row = $curr_stmt->get_result()->fetch_assoc();
-        $curr_status = $row ? (int)$row['status_id'] : null;
-        $curr_stmt->close();
-    }
+    $curr_status = get_complaint_status_id($conn, $complaint_id);
 
     if ($curr_status === null) {
         set_flash_message('error', 'Complaint not found.');
@@ -72,23 +66,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
                     if ($ok) {
                         // Update status: Verified/Escalated -> Assigned (or Reopened Assigned if you want a separate bucket)
                         $new_status = $ID_ASSIGNED;
-                        $up = $conn->prepare("UPDATE complaints SET status_id = ? WHERE complaint_id = ?");
-                        if ($up) {
-                            $up->bind_param("ii", $new_status, $complaint_id);
-                            $up->execute();
-                            $up->close();
+                        if (update_complaint_status_with_history($conn, $complaint_id, $new_status, $admin_id, "Assigned to staff")) {
+                            set_flash_message('success', 'Complaint successfully assigned!');
+                        } else {
+                            set_flash_message('error', 'Complaint was assigned, but status history could not be updated.');
                         }
-
-                        // Log history
-                        $h = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
-                        if ($h) {
-                            $remark = "Assigned to staff";
-                            $h->bind_param("iiis", $complaint_id, $new_status, $admin_id, $remark);
-                            $h->execute();
-                            $h->close();
-                        }
-
-                        set_flash_message('success', 'Complaint successfully assigned!');
                     } else {
                         set_flash_message('error', 'Failed to assign.');
                     }
@@ -104,6 +86,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
 
 // Verify complaint (Feature #4)
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['verify'])) {
+    require_csrf_token();
     $complaint_id = (int)$_POST['complaint_id'];
     $admin_id = $_SESSION['user_id'];
 
@@ -115,13 +98,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['verify'])) {
         $stmt->close();
 
         if ($changed > 0) {
-            $h = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
-            if ($h) {
-                $remark = "Verified by Admin";
-                $h->bind_param("iiis", $complaint_id, $ID_VERIFIED, $admin_id, $remark);
-                $h->execute();
-                $h->close();
-            }
+            add_complaint_history($conn, $complaint_id, $ID_VERIFIED, $admin_id, "Verified by Admin");
             set_flash_message('success', 'Complaint verified successfully.');
         } else {
             set_flash_message('error', 'Complaint is not in Pending state (or already verified).');
@@ -131,6 +108,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['verify'])) {
 
 // Approve reopen (Feature #5)
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['approve_reopen'])) {
+    require_csrf_token();
     $complaint_id = (int)$_POST['complaint_id'];
     $admin_id = $_SESSION['user_id'];
 
@@ -142,13 +120,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['approve_reopen'])) {
         $stmt->close();
 
         if ($changed > 0) {
-            $h = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
-            if ($h) {
-                $remark = "Reopen approved by Admin";
-                $h->bind_param("iiis", $complaint_id, $ID_VERIFIED, $admin_id, $remark);
-                $h->execute();
-                $h->close();
-            }
+            add_complaint_history($conn, $complaint_id, $ID_VERIFIED, $admin_id, "Reopen approved by Admin");
             set_flash_message('success', 'Reopen approved. You can assign it now.');
         } else {
             set_flash_message('error', 'This complaint is not waiting for reopen approval.');
@@ -158,6 +130,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['approve_reopen'])) {
 
 // Decline complaint (Feature #4)
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['decline'])) {
+    require_csrf_token();
     $complaint_id = (int)$_POST['complaint_id'];
     $admin_id = $_SESSION['user_id'];
     $reason = isset($_POST['reason']) ? trim($_POST['reason']) : 'Declined by Admin';
@@ -172,12 +145,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['decline'])) {
         $stmt->close();
 
         if ($changed > 0) {
-            $h = $conn->prepare("INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES (?, ?, ?, ?)");
-            if ($h) {
-                $h->bind_param("iiis", $complaint_id, $ID_DECLINED, $admin_id, $reason);
-                $h->execute();
-                $h->close();
-            }
+            add_complaint_history($conn, $complaint_id, $ID_DECLINED, $admin_id, $reason);
             set_flash_message('success', 'Complaint declined and user notified.');
         } else {
             set_flash_message('error', 'Action failed. Complaint may have been updated already.');
@@ -211,7 +179,7 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
 <!-- Assignment Table Section -->
 <div class="card shadow-sm border-0">
     <div class="card-header bg-white border-bottom py-3">
-        <h5 class="mb-0 fw-bold text-primary"><i class="fas fa-people-arrows me-2"></i>Deployment Management</h5>
+        <h5 class="mb-0 fw-bold text-primary"><i class="fas fa-people-arrows me-2"></i>Assignment Management</h5>
     </div>
     <div class="card-body p-0">
         <div class="table-container mb-0 border-0 shadow-none">
@@ -233,7 +201,7 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                               FROM complaints c 
                               LEFT JOIN complaint_categories cat ON c.category_id=cat.category_id
                               LEFT JOIN status_master s ON c.status_id=s.status_id
-                              WHERE c.status_id IN ($ID_PENDING, $ID_VERIFIED, $ID_REOPEN_AP, $ID_ESCALATED)
+                              WHERE c.status_id IN ($ID_PENDING, $ID_VERIFIED, $ID_REOPEN_AP)
                               ORDER BY c.created_at DESC";
                     
                     $res = mysqli_query($conn, $query);
@@ -262,6 +230,7 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                             if ($sid === $ID_PENDING) {
                                 echo "<div class='d-flex gap-2 justify-content-end'>
                                         <form method='POST' class='m-0'>
+                                            " . csrf_input() . "
                                             <input type='hidden' name='complaint_id' value='{$cid}'>
                                             <button type='submit' name='verify' class='btn btn-warning btn-sm rounded-pill px-3 fw-bold confirm-action' data-confirm='Verify this complaint before assignment?'>
                                                 <i class='fas fa-check me-1'></i> Verify
@@ -274,6 +243,7 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                             } elseif ($sid === $ID_REOPEN_AP) {
                                 echo "<div class='d-flex gap-2 justify-content-end'>
                                         <form method='POST' class='m-0'>
+                                            " . csrf_input() . "
                                             <input type='hidden' name='complaint_id' value='{$cid}'>
                                             <button type='submit' name='approve_reopen' class='btn btn-info btn-sm rounded-pill px-3 fw-bold confirm-action' data-confirm='Approve this reopened complaint for reassignment?'>
                                                 <i class='fas fa-user-shield me-1'></i> Approve
@@ -286,6 +256,7 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                             } else {
                                 // Verified / Escalated -> Assign
                                 echo "<form method='POST' class='d-flex gap-2 m-0'>
+                                        " . csrf_input() . "
                                         <input type='hidden' name='complaint_id' value='{$cid}'>
                                         <select name='staff_id' class='form-control form-control-sm border-primary' style='min-width: 130px; border-radius: 20px;' required>
                                             <option value=''>Assign to...</option>";
@@ -320,6 +291,8 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
 <?php include("../includes/footer.php"); ?>
 
 <script>
+const csrfToken = <?= json_encode(csrf_token()) ?>;
+
 function handleDecline(complaintId) {
     const reason = prompt("Enter reason for declining this complaint:", "Invalid or duplicate complaint");
     if (reason === null) return; // User cancelled
@@ -332,6 +305,7 @@ function handleDecline(complaintId) {
     const form = document.createElement('form');
     form.method = 'POST';
     form.innerHTML = `
+        <input type="hidden" name="csrf_token" value="${csrfToken}">
         <input type="hidden" name="complaint_id" value="${complaintId}">
         <input type="hidden" name="decline" value="1">
         <input type="hidden" name="reason" value="${reason.replace(/"/g, '&quot;')}">

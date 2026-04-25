@@ -1,6 +1,7 @@
 <?php
 session_start();
 include("../config/db.php");
+require_once("../includes/app_helper.php");
 
 // Redirect if already logged in
 if (isset($_SESSION['role_id'])) {
@@ -71,7 +72,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register | ResolveX</title>
+    <title>Register | <?= htmlspecialchars(app_name()) ?></title>
     <!-- Google Fonts: Outfit -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Bootstrap 5 CSS -->
@@ -120,7 +121,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         <div class="logo-area">
             <div class="icon-box"><i class="fas fa-user-plus"></i></div>
             <h2 class="fw-bold text-dark mb-1">Create Account</h2>
-            <p class="text-muted small">Join ResolveX to track and resolve local issues</p>
+            <p class="text-muted small">Register to report and track building maintenance complaints</p>
         </div>
 
         <?php if (!empty($error_msg)): ?>

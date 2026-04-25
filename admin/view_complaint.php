@@ -3,6 +3,8 @@ include("../config/db.php");
 include("../includes/auth.php");
 require_once("../includes/status_lookup.php");
 require_once("../includes/sla_escalation.php");
+require_once("../includes/workflow_helper.php");
+require_once("../includes/csrf_helper.php");
 
 if ($_SESSION['role_id'] != 1) {
     header("Location: ../auth/login.php");
@@ -27,17 +29,15 @@ $ID_REOPEN_AP = get_status_id_or($conn, "Reopened - Pending Approval", 5);
 
 // Handle Assignment Form Submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
+    require_csrf_token();
     $staff_id = (int)$_POST['staff_id'];
     
     // Check if already assigned
-    $check = mysqli_query($conn, "SELECT * FROM assignments WHERE complaint_id='$complaint_id' AND staff_id='$staff_id'");
-    if (mysqli_num_rows($check) > 0) {
+    if (is_assigned_to_staff($conn, $complaint_id, $staff_id)) {
         set_flash_message('error', 'Already assigned to this staff member.');
     } else {
         // Ensure verified before assignment (Feature #4 + #5)
-        $curr = mysqli_query($conn, "SELECT status_id FROM complaints WHERE complaint_id='$complaint_id' LIMIT 1");
-        $curr_row = $curr ? mysqli_fetch_assoc($curr) : null;
-        $curr_status = $curr_row ? (int)$curr_row['status_id'] : null;
+        $curr_status = get_complaint_status_id($conn, $complaint_id);
 
         if ($curr_status === $ID_PENDING) {
             set_flash_message('error', 'Please verify the complaint before assignment.');
@@ -46,14 +46,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
         } elseif (!in_array($curr_status, [$ID_VERIFIED, $ID_ESCALATED], true)) {
             set_flash_message('error', 'Complaint is not eligible for assignment.');
         } else {
-        $q = "INSERT INTO assignments (complaint_id, staff_id, assigned_by) VALUES ('$complaint_id', '$staff_id', '$admin_id')";
-        
-        // Also update status to Assigned/In-Progress (Assuming ID 2)
-        $up = "UPDATE complaints SET status_id={$ID_ASSIGNED} WHERE complaint_id='$complaint_id' AND status_id IN ({$ID_VERIFIED}, {$ID_ESCALATED})";
-        
-        if (mysqli_query($conn, $q)) {
-            mysqli_query($conn, $up);
-            mysqli_query($conn, "INSERT INTO complaint_history (complaint_id, status_id, updated_by, remark) VALUES ('$complaint_id', {$ID_ASSIGNED}, '$admin_id', 'Assigned to staff')");
+        $stmt = $conn->prepare("INSERT INTO assignments (complaint_id, staff_id, assigned_by) VALUES (?, ?, ?)");
+        if ($stmt) {
+            $stmt->bind_param("iii", $complaint_id, $staff_id, $admin_id);
+            $assigned = $stmt->execute();
+            $stmt->close();
+        } else {
+            $assigned = false;
+        }
+
+        if ($assigned) {
+            update_complaint_status_with_history($conn, $complaint_id, $ID_ASSIGNED, $admin_id, 'Assigned to staff');
             set_flash_message('success', 'Complaint successfully assigned!');
             echo "<script>window.location.href='view_complaint.php?id=$complaint_id';</script>";
             exit;
@@ -71,31 +74,48 @@ $query = "SELECT c.*, cat.category_name, a.level1, a.level2, a.level3, s.status_
           LEFT JOIN area_master a ON c.area_id = a.area_id
           LEFT JOIN status_master s ON c.status_id = s.status_id
           LEFT JOIN users u ON c.user_id = u.user_id
-          WHERE c.complaint_id = '$complaint_id'";
-
-$result = mysqli_query($conn, $query);
-if (mysqli_num_rows($result) == 0) {
+          WHERE c.complaint_id = ?
+          LIMIT 1";
+$stmt = $conn->prepare($query);
+$complaint = null;
+if ($stmt) {
+    $stmt->bind_param("i", $complaint_id);
+    $stmt->execute();
+    $complaint = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+}
+if (!$complaint) {
     echo "<div class='content-area'><p>Complaint not found.</p></div>";
     include("../includes/footer.php");
     exit;
 }
-$complaint = mysqli_fetch_assoc($result);
 
 $area_str = htmlspecialchars($complaint['level1'] . " - " . $complaint['level2']);
 if (!empty($complaint['level3'])) $area_str .= " - " . htmlspecialchars($complaint['level3']);
 
 // Fetch Staff List
 $staff_arr = [];
-$res_staff = mysqli_query($conn, "SELECT user_id, name FROM users WHERE role_id=2");
-while ($s = mysqli_fetch_assoc($res_staff)) {
-    $staff_arr[] = $s;
+$res_staff = $conn->prepare("SELECT user_id, name FROM users WHERE role_id = 2");
+if ($res_staff) {
+    $res_staff->execute();
+    $staff_result = $res_staff->get_result();
+    while ($s = mysqli_fetch_assoc($staff_result)) {
+        $staff_arr[] = $s;
+    }
+    $res_staff->close();
 }
 
 // Fetch current assignments
 $assigned_staff = [];
-$as_res = mysqli_query($conn, "SELECT u.name FROM assignments a JOIN users u ON a.staff_id=u.user_id WHERE a.complaint_id='$complaint_id'");
-while ($ar = mysqli_fetch_assoc($as_res)) {
-    $assigned_staff[] = $ar['name'];
+$as_res = $conn->prepare("SELECT u.name FROM assignments a JOIN users u ON a.staff_id = u.user_id WHERE a.complaint_id = ?");
+if ($as_res) {
+    $as_res->bind_param("i", $complaint_id);
+    $as_res->execute();
+    $assigned_result = $as_res->get_result();
+    while ($ar = mysqli_fetch_assoc($assigned_result)) {
+        $assigned_staff[] = $ar['name'];
+    }
+    $as_res->close();
 }
 ?>
 
@@ -160,18 +180,28 @@ while ($ar = mysqli_fetch_assoc($as_res)) {
                 </div>
 
                 <?php
-                $att_res = mysqli_query($conn, "SELECT * FROM complaint_attachments WHERE complaint_id='$complaint_id'");
-                if(mysqli_num_rows($att_res) > 0): ?>
+                $attachments = [];
+                $att_stmt = $conn->prepare("SELECT * FROM complaint_attachments WHERE complaint_id = ?");
+                if ($att_stmt) {
+                    $att_stmt->bind_param("i", $complaint_id);
+                    $att_stmt->execute();
+                    $att_res = $att_stmt->get_result();
+                    while ($att_row = mysqli_fetch_assoc($att_res)) {
+                        $attachments[] = $att_row;
+                    }
+                    $att_stmt->close();
+                }
+                if(!empty($attachments)): ?>
                     <hr class="my-4">
                     <div class="mt-2">
                         <label class="text-muted small fw-bold text-uppercase d-block mb-2">Evidence / Attachments</label>
                         <div class="d-flex flex-wrap gap-2">
-                            <?php while($att = mysqli_fetch_assoc($att_res)): 
+                            <?php foreach($attachments as $att): 
                                 $filename = basename($att['file_path']); ?>
                                 <a href="../<?= $att['file_path'] ?>" target="_blank" class="btn btn-outline-primary btn-sm rounded-pill px-3">
                                     <i class="fas fa-paperclip me-2"></i><?= $filename ?>
                                 </a>
-                            <?php endwhile; ?>
+                            <?php endforeach; ?>
                         </div>
                     </div>
                 <?php endif; ?>
@@ -179,7 +209,7 @@ while ($ar = mysqli_fetch_assoc($as_res)) {
         </div>
     </div>
 
-    <!-- Right Column: Meta & Deployment -->
+    <!-- Right Column: Meta & Assignment -->
     <div class="col-lg-4">
         <!-- Reporter Info -->
         <div class="card shadow-sm border-0 mb-4 bg-primary-light">
@@ -197,10 +227,10 @@ while ($ar = mysqli_fetch_assoc($as_res)) {
             </div>
         </div>
 
-        <!-- Deployment Control -->
+        <!-- Assignment Control -->
         <div class="card shadow-sm border-0 mb-4">
             <div class="card-header bg-white border-bottom py-3">
-                <h5 class="mb-0 fw-bold"><i class="fas fa-user-plus me-2 text-primary"></i>Deployment Control</h5>
+                <h5 class="mb-0 fw-bold"><i class="fas fa-user-plus me-2 text-primary"></i>Assignment Control</h5>
             </div>
             <div class="card-body">
                 <div class="mb-4">
@@ -222,6 +252,7 @@ while ($ar = mysqli_fetch_assoc($as_res)) {
                 <hr class="my-4 opacity-10">
 
                 <form method="POST">
+                    <?= csrf_input() ?>
                     <div class="mb-3">
                         <label class="form-label small fw-bold text-uppercase text-muted">Assign New Staff</label>
                         <select name="staff_id" class="form-select border-primary-light" required>
@@ -241,9 +272,15 @@ while ($ar = mysqli_fetch_assoc($as_res)) {
         <?php 
         // User Satisfaction
         if ($complaint['status_id'] >= 5) {
-            $fb_res = mysqli_query($conn, "SELECT * FROM feedback WHERE complaint_id='$complaint_id'");
-            if (mysqli_num_rows($fb_res) > 0) {
-                $fb = mysqli_fetch_assoc($fb_res);
+            $feedback_stmt = $conn->prepare("SELECT * FROM feedback WHERE complaint_id = ?");
+            $fb = null;
+            if ($feedback_stmt) {
+                $feedback_stmt->bind_param("i", $complaint_id);
+                $feedback_stmt->execute();
+                $fb = $feedback_stmt->get_result()->fetch_assoc();
+                $feedback_stmt->close();
+            }
+            if ($fb) {
                 ?>
                 <div class="card shadow-sm border-0 mb-4 bg-success-light border-0">
                     <div class="card-body">
@@ -276,10 +313,20 @@ while ($ar = mysqli_fetch_assoc($as_res)) {
                     </div>
 
                     <?php
-                    $history_res = mysqli_query($conn, "SELECT h.*, s.status_name, u.name as actor_name FROM complaint_history h LEFT JOIN status_master s ON h.status_id = s.status_id LEFT JOIN users u ON h.updated_by = u.user_id WHERE h.complaint_id = '$complaint_id' ORDER BY h.updated_at ASC");
-                    $h_count = mysqli_num_rows($history_res);
+                    $history_rows = [];
+                    $history_stmt = $conn->prepare("SELECT h.*, s.status_name, u.name as actor_name FROM complaint_history h LEFT JOIN status_master s ON h.status_id = s.status_id LEFT JOIN users u ON h.updated_by = u.user_id WHERE h.complaint_id = ? ORDER BY h.updated_at ASC");
+                    if ($history_stmt) {
+                        $history_stmt->bind_param("i", $complaint_id);
+                        $history_stmt->execute();
+                        $history_res = $history_stmt->get_result();
+                        while ($history_row = mysqli_fetch_assoc($history_res)) {
+                            $history_rows[] = $history_row;
+                        }
+                        $history_stmt->close();
+                    }
+                    $h_count = count($history_rows);
                     $idx = 0;
-                    while($h = mysqli_fetch_assoc($history_res)): 
+                    foreach($history_rows as $h): 
                         $idx++;
                         $is_last = ($idx == $h_count);
                         $dot_color = ($h['status_id'] >= 3) ? 'success' : 'primary';
@@ -292,7 +339,7 @@ while ($ar = mysqli_fetch_assoc($as_res)) {
                                 <div class="bg-light p-2 rounded small text-muted fs-7"><?= htmlspecialchars($h['remark']) ?></div>
                             <?php endif; ?>
                         </div>
-                    <?php endwhile; ?>
+                    <?php endforeach; ?>
                 </div>
             </div>
         </div>

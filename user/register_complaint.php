@@ -2,7 +2,9 @@
 include("../config/db.php");
 include("../includes/auth.php");
 include("../includes/upload_helper.php");
+require_once("../includes/app_helper.php");
 require_once("../includes/status_lookup.php");
+require_once("../includes/csrf_helper.php");
 include("../includes/header.php");
 include_once("../includes/flash_messages.php");
 
@@ -12,6 +14,7 @@ if (!isset($_SESSION['role_id']) || $_SESSION['role_id'] != 3) {
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    require_csrf_token();
 
     // Sanitize input
     $title = trim($_POST['title'] ?? '');
@@ -27,20 +30,22 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     } else {
 
     // Calculate SLA properties based on U=38 rules (6 hours initial, 30 hours resolution)
-    $initial_sla = date('Y-m-d H:i:s', strtotime('+6 hours'));
-    $resolution_sla = date('Y-m-d H:i:s', strtotime('+30 hours'));
+    $created_at = date('Y-m-d H:i:s');
+    $created_ts = strtotime($created_at);
+    $initial_sla = date('Y-m-d H:i:s', $created_ts + (6 * 3600));
+    $resolution_sla = date('Y-m-d H:i:s', $created_ts + (30 * 3600));
 
     $ID_PENDING = get_status_id_or($conn, "Pending", 1);
 
     // Insert complaint (prepared statement) (Feature #9)
     $stmt = $conn->prepare("
-        INSERT INTO complaints (title, description, category_id, area_id, exact_location, user_id, priority, status_id, initial_sla_due, resolution_sla_due)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO complaints (title, description, category_id, area_id, exact_location, user_id, priority, status_id, initial_sla_due, resolution_sla_due, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
 
     if ($stmt) {
         $stmt->bind_param(
-            "ssiisisiss",
+            "ssiisisisss",
             $title,
             $desc,
             $category,
@@ -50,7 +55,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $priority,
             $ID_PENDING,
             $initial_sla,
-            $resolution_sla
+            $resolution_sla,
+            $created_at
         );
         $ok = $stmt->execute();
         $complaint_id = $ok ? (int)$stmt->insert_id : 0;
@@ -99,6 +105,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
     }
 }
+
+$current_complaint_datetime = date('Y-m-d\TH:i');
+$current_user_name = $_SESSION['name'] ?? 'Logged-in User';
+$current_user_email = '';
+
+$user_stmt = $conn->prepare("SELECT name, email FROM users WHERE user_id = ? LIMIT 1");
+if ($user_stmt) {
+    $session_user_id = (int)($_SESSION['user_id'] ?? 0);
+    $user_stmt->bind_param("i", $session_user_id);
+    $user_stmt->execute();
+    $user_row = $user_stmt->get_result()->fetch_assoc();
+    $user_stmt->close();
+    if ($user_row) {
+        $current_user_name = $user_row['name'];
+        $current_user_email = $user_row['email'];
+    }
+}
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4 mt-2">
@@ -124,6 +147,28 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             </div>
             <div class="card-body">
                 <form method="POST" enctype="multipart/form-data" class="needs-validation" novalidate id="complaintForm">
+                    <?= csrf_input() ?>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label class="form-label">Complainant Name</label>
+                                <input type="text" name="complainant_name" class="form-control" value="<?= htmlspecialchars($current_user_name) ?>" readonly>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label class="form-label">Complainant Email</label>
+                                <input type="email" name="complainant_email" class="form-control" value="<?= htmlspecialchars($current_user_email) ?>" readonly>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Complaint Date &amp; Time</label>
+                        <input type="datetime-local" name="complaint_datetime" class="form-control" value="<?= htmlspecialchars($current_complaint_datetime) ?>" readonly>
+                        <div class="form-text">Auto-filled to match the recorded submission time.</div>
+                    </div>
+
                     <div class="form-group">
                         <label class="form-label">Complaint Title</label>
                         <input type="text" name="title" class="form-control" placeholder="What is the main issue?" required>
@@ -225,7 +270,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     
                     <div class="d-grid mt-4">
                         <button type="submit" class="btn btn-primary py-3 rounded-pill shadow-sm fw-bold" id="submitBtn">
-                            <i class="fas fa-paper-plane me-2"></i>Submit Application
+                            <i class="fas fa-paper-plane me-2"></i>Submit Building Maintenance Complaint
                         </button>
                     </div>
                 </form>

@@ -30,7 +30,7 @@ $user_id = $_SESSION['user_id'];
 
 <div class="card shadow-sm border-0">
     <div class="card-header bg-white border-bottom py-3">
-        <h5 class="mb-0 fw-bold text-primary"><i class="fas fa-tasks me-2"></i>Deployment Queue</h5>
+        <h5 class="mb-0 fw-bold text-primary"><i class="fas fa-tasks me-2"></i>Assigned Complaint Queue</h5>
     </div>
     <div class="card-body p-0">
         <div class="table-container mb-0 border-0 shadow-none">
