@@ -9,7 +9,7 @@ function get_reports_summary_data(mysqli $conn): array
     $perfQuery = "
         SELECT 
             cat.category_name,
-            COALESCE(AVG(TIMESTAMPDIFF(MINUTE, c.created_at, h.resolved_at) / 60), 0) AS avg_hours,
+            COALESCE(ROUND(AVG(CASE WHEN h.resolved_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, c.created_at, h.resolved_at) / 60 END), 2), 0) AS avg_hours,
             COUNT(c.complaint_id) AS total_complaints
         FROM complaint_categories cat
         LEFT JOIN complaints c ON cat.category_id = c.category_id

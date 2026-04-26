@@ -21,6 +21,9 @@ function get_status_config($status_name, $is_overdue = false) {
         case 'waiting':
         case 'verified':
             return ['class' => 'status-yellow', 'icon' => 'fa-clock-rotate-left'];
+
+        case 'delayed':
+            return ['class' => 'status-yellow', 'icon' => 'fa-hourglass-half'];
         
         case 'in progress':
         case 'reopened - assigned':

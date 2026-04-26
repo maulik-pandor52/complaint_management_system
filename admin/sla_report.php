@@ -60,7 +60,7 @@ include("../includes/header.php");
                         <th>Created / Staff</th>
                         <th>Initial SLA</th>
                         <th>Resolution SLA</th>
-                        <th class="pe-4">Escalated</th>
+                        <th class="pe-4">Overall SLA</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -71,9 +71,14 @@ include("../includes/header.php");
                     <?php else: ?>
                         <?php foreach ($reportRows as $row): ?>
                             <?php
-                            $initialClass = $row['initial_status'] === 'Within SLA' ? 'text-success' : 'text-danger';
-                            $resolutionClass = $row['resolution_status'] === 'Within SLA' ? 'text-success' : 'text-danger';
-                            $escalationBadge = $row['is_escalated'] ? 'bg-danger-light text-danger' : 'bg-success-light text-success';
+                            $initialClass = $row['initial_sla_status'] === 'Within SLA' ? 'text-success' : 'text-warning';
+                            $resolutionClass = $row['resolution_sla_status'] === 'Within SLA' ? 'text-success' : 'text-danger';
+                            $overallBadgeClass = 'bg-success-light text-success';
+                            if ($row['overall_sla_badge'] === 'Delayed') {
+                                $overallBadgeClass = 'bg-warning text-dark';
+                            } elseif ($row['overall_sla_badge'] === 'Escalated') {
+                                $overallBadgeClass = 'bg-danger-light text-danger';
+                            }
                             ?>
                             <tr>
                                 <td class="ps-4">
@@ -89,12 +94,13 @@ include("../includes/header.php");
                                     <div class="small"><strong>Priority:</strong> <?= htmlspecialchars($row['priority']) ?></div>
                                 </td>
                                 <td>
+                                    <div class="small text-muted text-uppercase fw-bold mb-1">Complaint</div>
                                     <?= render_status_badge($row['status_name']) ?>
                                 </td>
                                 <td>
                                     <div class="small"><strong>Created:</strong> <?= date('d M Y, h:i A', strtotime($row['created_at'])) ?></div>
                                     <div class="small"><strong>Assigned Staff:</strong> <?= htmlspecialchars($row['assigned_staff']) ?></div>
-                                    <div class="small"><strong>Current Time:</strong> <span class="live-time-cell"><?= htmlspecialchars(date('d M Y, h:i:s A')) ?></span></div>
+                                    <!-- <div class="small"><strong>Current Time:</strong> <span class="live-time-cell"><?= htmlspecialchars(date('d M Y, h:i:s A')) ?></span></div> -->
                                 </td>
                                 <td>
                                     <div class="small"><strong>Start:</strong> <?= date('d M Y, h:i A', strtotime($row['initial_sla_start'])) ?></div>
@@ -107,7 +113,12 @@ include("../includes/header.php");
                                             data-live="<?= !empty($row['initial_timer']['is_live']) ? '1' : '0' ?>"
                                         ><?= htmlspecialchars($row['initial_timer']['label']) ?></span>
                                     </div>
-                                    <div class="small fw-bold <?= $initialClass ?>"><?= htmlspecialchars($row['initial_status']) ?></div>
+                                    <div class="small">
+                                        <strong>Status:</strong>
+                                        <span class="badge rounded-pill px-3 py-2 <?= $initialClass === 'text-success' ? 'bg-success-light text-success' : 'bg-warning text-dark' ?>">
+                                            <?= htmlspecialchars($row['initial_sla_display_status']) ?>
+                                        </span>
+                                    </div>
                                 </td>
                                 <td>
                                     <div class="small"><strong>Start:</strong> <?= date('d M Y, h:i A', strtotime($row['resolution_sla_start'])) ?></div>
@@ -120,11 +131,16 @@ include("../includes/header.php");
                                             data-live="<?= !empty($row['resolution_timer']['is_live']) ? '1' : '0' ?>"
                                         ><?= htmlspecialchars($row['resolution_timer']['label']) ?></span>
                                     </div>
-                                    <div class="small fw-bold <?= $resolutionClass ?>"><?= htmlspecialchars($row['resolution_status']) ?></div>
+                                    <div class="small">
+                                        <strong>Status:</strong>
+                                        <span class="badge rounded-pill px-3 py-2 <?= $resolutionClass === 'text-success' ? 'bg-success-light text-success' : 'bg-danger-light text-danger' ?>">
+                                            <?= htmlspecialchars($row['resolution_sla_status']) ?>
+                                        </span>
+                                    </div>
                                 </td>
                                 <td class="pe-4">
-                                    <span class="badge rounded-pill px-3 py-2 <?= $escalationBadge ?>">
-                                        <?= htmlspecialchars($row['escalated']) ?>
+                                    <span class="badge rounded-pill px-3 py-2 <?= $overallBadgeClass ?>">
+                                        <?= htmlspecialchars($row['overall_sla_badge']) ?>
                                     </span>
                                 </td>
                             </tr>

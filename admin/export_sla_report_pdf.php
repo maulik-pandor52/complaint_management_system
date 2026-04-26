@@ -50,8 +50,8 @@ if (empty($reportRows)) {
             <tr><td width="20%"><strong>Title</strong></td><td width="80%">' . htmlspecialchars($row['title'], ENT_QUOTES, 'UTF-8') . '</td></tr>
             <tr><td><strong>Description</strong></td><td>' . htmlspecialchars($row['description'], ENT_QUOTES, 'UTF-8') . '</td></tr>
             <tr><td><strong>Priority</strong></td><td>' . htmlspecialchars($row['priority'], ENT_QUOTES, 'UTF-8') . '</td></tr>
-            <tr><td><strong>Status</strong></td><td>' . htmlspecialchars($row['status_name'], ENT_QUOTES, 'UTF-8') . '</td></tr>
-            <tr><td><strong>Escalated</strong></td><td>' . htmlspecialchars($row['escalated'], ENT_QUOTES, 'UTF-8') . '</td></tr>
+            <tr><td><strong>Complaint Status</strong></td><td>' . htmlspecialchars($row['status_name'], ENT_QUOTES, 'UTF-8') . '</td></tr>
+            <tr><td><strong>Overall SLA</strong></td><td>' . htmlspecialchars($row['overall_sla_badge'], ENT_QUOTES, 'UTF-8') . '</td></tr>
             <tr><td><strong>Category</strong></td><td>' . htmlspecialchars($row['category'], ENT_QUOTES, 'UTF-8') . '</td></tr>
             <tr><td><strong>Location</strong></td><td>' . htmlspecialchars($row['campus'], ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($row['building'], ENT_QUOTES, 'UTF-8') . ' / ' . htmlspecialchars($row['spot'], ENT_QUOTES, 'UTF-8') . '</td></tr>
             <tr><td><strong>Created</strong></td><td>' . htmlspecialchars(date('d M Y, h:i A', strtotime($row['created_at'])), ENT_QUOTES, 'UTF-8') . '</td></tr>

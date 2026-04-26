@@ -201,7 +201,7 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                               FROM complaints c 
                               LEFT JOIN complaint_categories cat ON c.category_id=cat.category_id
                               LEFT JOIN status_master s ON c.status_id=s.status_id
-                              WHERE c.status_id IN ($ID_PENDING, $ID_VERIFIED, $ID_REOPEN_AP)
+                              WHERE c.status_id IN ($ID_PENDING, $ID_REOPEN_AP, $ID_VERIFIED, $ID_ESCALATED)
                               ORDER BY c.created_at DESC";
                     
                     $res = mysqli_query($conn, $query);
@@ -211,13 +211,18 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                             $cid = (int)$r['complaint_id'];
                             $sid = (int)$r['status_id'];
                             
+                            $display_status = $r['status_name'];
+                            if ($sid === $ID_VERIFIED && !empty($r['initial_sla_due']) && strtotime($r['initial_sla_due']) < time()) {
+                                $display_status = 'Delayed';
+                            }
+
                             echo "<tr>
                                     <td class='ps-4 fw-bold text-muted'>#{$r['complaint_id']}</td>
                                     <td>
                                         <div class='fw-bold'>" . htmlspecialchars($r['title']) . "</div>
                                         <div class='small text-muted'>" . htmlspecialchars($r['category_name']) . " &bull; Reported " . date('M d', strtotime($r['created_at'])) . "</div>
                                     </td>
-                                    <td>" . render_status_badge($r['status_name']) . "</td>
+                                    <td>" . render_status_badge($display_status) . "</td>
                                     <td class='small'>{$assigned}</td>
                                     <td class='text-end pe-4'>
                                         <div class='d-flex gap-2 justify-content-end align-items-center'>

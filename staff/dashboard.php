@@ -65,7 +65,7 @@ $pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM com
                         <th class="ps-4">ID</th>
                         <th>Title / Description</th>
                         <th>Status</th>
-                        <th>SLA Deadline</th>
+                        <th>SLA Deadline</th> 
                         <th class="text-end pe-4">Action</th>
                     </tr>
                 </thead>

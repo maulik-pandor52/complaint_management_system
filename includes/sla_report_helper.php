@@ -122,12 +122,44 @@ function calculate_live_timer(string $createdAt, ?string $eventAt, int $slaHours
     ];
 }
 
+function calculate_overall_sla_badge(bool $initialSlaBreached, bool $resolutionSlaBreached): string
+{
+    if ($resolutionSlaBreached) {
+        return 'Escalated';
+    }
+
+    if ($initialSlaBreached) {
+        return 'Delayed';
+    }
+
+    return 'Within SLA';
+}
+
+function earliest_sla_event_at(?string $firstAt, ?string $secondAt): ?string
+{
+    $firstTs = !empty($firstAt) ? strtotime($firstAt) : false;
+    $secondTs = !empty($secondAt) ? strtotime($secondAt) : false;
+
+    if ($firstTs === false && $secondTs === false) {
+        return null;
+    }
+
+    if ($firstTs === false) {
+        return $secondAt;
+    }
+
+    if ($secondTs === false) {
+        return $firstAt;
+    }
+
+    return $firstTs <= $secondTs ? $firstAt : $secondAt;
+}
+
 function get_live_sla_report_rows(mysqli $conn): array
 {
     $ID_PENDING = get_status_id_or($conn, 'Pending', 1);
     $ID_RESOLVED = get_status_id_or($conn, 'Resolved', 3);
     $ID_CLOSED = get_status_id_or($conn, 'Closed', 4);
-    $ID_ESCALATED = get_status_id_or($conn, 'Escalated', 8);
 
     $sql = "
         SELECT
@@ -193,14 +225,21 @@ function get_live_sla_report_rows(mysqli $conn): array
     $nowTs = time();
 
     while ($row = $result->fetch_assoc()) {
-        $firstResponseAt = $row['first_assignment_at'] ?: $row['first_response_at'];
+        $firstResponseAt = earliest_sla_event_at($row['first_assignment_at'], $row['first_response_at']);
         $resolutionEventAt = in_array((int)$row['status_id'], [$ID_RESOLVED, $ID_CLOSED], true) && !empty($row['resolved_at'])
             ? $row['resolved_at']
             : null;
 
         $initialSla = calculate_live_timer($row['created_at'], $firstResponseAt, 6, $nowTs);
         $resolutionSla = calculate_live_timer($row['created_at'], $resolutionEventAt, 30, $nowTs);
-        $isEscalated = ($initialSla['is_breached'] || $resolutionSla['is_breached']);
+        $initialSlaBreached = $initialSla['is_breached'];
+        $resolutionSlaBreached = $resolutionSla['is_breached'];
+        $overallSlaBadge = calculate_overall_sla_badge($initialSlaBreached, $resolutionSlaBreached);
+        $initialSlaStatus = $initialSlaBreached ? 'Breached' : 'Within SLA';
+        $initialSlaDisplayStatus = $initialSlaBreached ? 'Delayed' : 'Within SLA';
+        $resolutionSlaStatus = $resolutionSlaBreached ? 'Breached' : 'Within SLA';
+        $isDelayed = $overallSlaBadge === 'Delayed';
+        $isEscalated = $overallSlaBadge === 'Escalated';
 
         $rows[] = [
             'complaint_id' => (int)$row['complaint_id'],
@@ -212,6 +251,7 @@ function get_live_sla_report_rows(mysqli $conn): array
             'spot' => $row['spot'] ?: '-',
             'priority' => $row['priority'],
             'status_name' => $row['status_name'] ?: 'Unknown',
+            'display_status_name' => $overallSlaBadge,
             'created_at' => $row['created_at'],
             'assigned_staff' => $row['assigned_staff'] ?: 'Unassigned',
             'initial_sla_start' => $row['created_at'],
@@ -221,10 +261,17 @@ function get_live_sla_report_rows(mysqli $conn): array
             'current_time' => date('Y-m-d H:i:s', $nowTs),
             'initial_timer' => $initialSla['timer'],
             'resolution_timer' => $resolutionSla['timer'],
-            'initial_status' => $initialSla['status'],
-            'resolution_status' => $resolutionSla['status'],
-            'escalated' => $isEscalated ? 'Yes' : 'No',
+            'initial_sla_status' => $initialSlaStatus,
+            'initial_sla_display_status' => $initialSlaDisplayStatus,
+            'resolution_sla_status' => $resolutionSlaStatus,
+            'overall_sla_badge' => $overallSlaBadge,
+            'initial_status' => $initialSlaDisplayStatus,
+            'resolution_status' => $resolutionSlaStatus,
+            'escalated' => $overallSlaBadge,
             'is_escalated' => $isEscalated,
+            'is_delayed' => $isDelayed,
+            'initial_sla_breached' => $initialSlaBreached,
+            'resolution_sla_breached' => $resolutionSlaBreached,
             'resolved_at' => $row['resolved_at'],
             'first_assignment_at' => $row['first_assignment_at'],
             'first_response_at' => $row['first_response_at'],

@@ -34,9 +34,7 @@ function run_sla_escalation(mysqli $conn): void
         $currentStatusId = (int)$row['status_id'];
 
         if ($shouldEscalate) {
-            $reason = $row['initial_status'] === 'Breached'
-                ? "Auto escalation: Initial SLA breached"
-                : "Auto escalation: Resolution SLA breached";
+            $reason = "Auto escalation: Resolution SLA breached";
             _escalate_one($conn, $cid, $ID_ESCALATED, $reason);
         } elseif ($currentStatusId === (int)$ID_ESCALATED) {
             _restore_false_escalation($conn, $cid, $ID_ESCALATED);
