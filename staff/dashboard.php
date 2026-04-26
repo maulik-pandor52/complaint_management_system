@@ -2,6 +2,7 @@
 include("../config/db.php");
 include("../includes/auth.php");
 require_once("../includes/sla_escalation.php");
+require_once("../includes/assignment_helper.php");
 
 // Only Staff can access
 if ($_SESSION['role_id'] != 2) {
@@ -16,10 +17,11 @@ include("../includes/header.php");
 include_once("../includes/flash_messages.php");
 
 $staff_id = $_SESSION['user_id'];
+ensure_assignment_active_schema($conn);
 
 // Get counts
-$total_assigned = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM assignments a JOIN complaints c ON a.complaint_id = c.complaint_id WHERE a.staff_id='$staff_id' AND c.status_id <> 9"))['c'];
-$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints c JOIN assignments a ON c.complaint_id = a.complaint_id WHERE a.staff_id='$staff_id' AND c.status_id NOT IN (3, 4, 9)"))['c'];
+$total_assigned = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM assignments a JOIN complaints c ON a.complaint_id = c.complaint_id WHERE a.staff_id='$staff_id' AND a.is_active = 1 AND c.status_id <> 9"))['c'];
+$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints c JOIN assignments a ON c.complaint_id = a.complaint_id WHERE a.staff_id='$staff_id' AND a.is_active = 1 AND c.status_id NOT IN (3, 4, 9)"))['c'];
 
 ?>
 
@@ -71,7 +73,7 @@ $pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM com
                 </thead>
                 <tbody>
                     <?php
-                    $result = mysqli_query($conn, "SELECT c.*, a.assigned_at, s.status_name FROM complaints c JOIN assignments a ON c.complaint_id = a.complaint_id LEFT JOIN status_master s ON c.status_id = s.status_id WHERE a.staff_id='$staff_id' AND c.status_id <> 9 ORDER BY a.assigned_at DESC");
+                    $result = mysqli_query($conn, "SELECT c.*, a.assigned_at, s.status_name FROM complaints c JOIN assignments a ON c.complaint_id = a.complaint_id LEFT JOIN status_master s ON c.status_id = s.status_id WHERE a.staff_id='$staff_id' AND a.is_active = 1 AND c.status_id <> 9 ORDER BY a.assigned_at DESC");
                     if (mysqli_num_rows($result) > 0) {
                         while ($row = mysqli_fetch_assoc($result)) {
                             $due_date = !empty($row['resolution_sla_due']) ? date('M d, H:i', strtotime($row['resolution_sla_due'])) : "---";

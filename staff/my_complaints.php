@@ -1,6 +1,7 @@
 <?php
 include("../config/db.php");
 include("../includes/auth.php");
+require_once("../includes/workflow_helper.php");
 
 if ($_SESSION['role_id'] != 2) {
     header("Location: ../auth/login.php");
@@ -11,6 +12,7 @@ include("../includes/header.php");
 include_once("../includes/flash_messages.php");
 
 $user_id = $_SESSION['user_id'];
+ensure_assignment_active_schema($conn);
 ?>
 
 <!-- Header Section -->
@@ -54,13 +56,21 @@ $user_id = $_SESSION['user_id'];
                               LEFT JOIN area_master a ON c.area_id = a.area_id
                               LEFT JOIN status_master s ON c.status_id = s.status_id
                               LEFT JOIN users u ON c.user_id = u.user_id
-                              WHERE asn.staff_id = '$user_id' AND c.status_id <> 9
+                              WHERE asn.staff_id = '$user_id' AND asn.is_active = 1 AND c.status_id <> 9
                               ORDER BY c.created_at DESC";
 
                     $res = mysqli_query($conn, $query);
                     if(mysqli_num_rows($res) > 0) {
                         while ($r = mysqli_fetch_assoc($res)) {
                             $badge_class = "badge-" . strtolower(str_replace(' ', '-', $r['status_name']));
+                            $allowedTargets = allowed_staff_status_targets($conn, (int)$r['status_id']);
+                            $canUpdate = !empty($allowedTargets);
+                            $inactiveLabel = in_array((int)$r['status_id'], [3, 4], true) ? 'Completed' : 'No Action';
+                            $inactiveIcon = in_array((int)$r['status_id'], [3, 4], true) ? 'fa-circle-check' : 'fa-lock';
+                            $inactiveClass = in_array((int)$r['status_id'], [3, 4], true) ? 'text-success' : 'text-muted';
+                            $actionHtml = $canUpdate
+                                ? "<a href='view_complaint.php?id={$r['complaint_id']}' class='btn btn-primary btn-sm rounded-pill px-3'>Update Action</a>"
+                                : "<span class='badge rounded-pill bg-light {$inactiveClass} border px-3 py-2'><i class='fas {$inactiveIcon} me-1'></i>{$inactiveLabel}</span>";
                             echo "<tr>
                                     <td class='ps-4 fw-bold text-muted'>#{$r['complaint_id']}</td>
                                     <td>
@@ -71,9 +81,7 @@ $user_id = $_SESSION['user_id'];
                                     <td class='small'>" . htmlspecialchars($r['level1'] . " (" . $r['level2'] . ")") . "</td>
                                     <td>" . render_status_badge($r['status_name']) . "</td>
                                     <td class='text-end pe-4'>
-                                        <a href='view_complaint.php?id={$r['complaint_id']}' class='btn btn-primary btn-sm rounded-pill px-3'>
-                                            Update Action
-                                        </a>
+                                        {$actionHtml}
                                     </td>
                                   </tr>";
                         }

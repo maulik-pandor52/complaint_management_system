@@ -3,6 +3,7 @@ include("../config/db.php");
 include("../includes/auth.php");
 require_once("../includes/status_lookup.php");
 require_once("../includes/sla_escalation.php");
+require_once("../includes/assignment_helper.php");
 
 if ($_SESSION['role_id'] != 2) {
     header("Location: ../auth/login.php");
@@ -14,6 +15,7 @@ include_once("../includes/flash_messages.php");
 include_once("../includes/status_helper.php");
 
 run_sla_escalation($conn);
+ensure_assignment_active_schema($conn);
 
 $staff_id = (int)$_SESSION['user_id'];
 $ID_ESCALATED = get_status_id_or($conn, "Escalated", 8);
@@ -23,7 +25,7 @@ $sql = "
     FROM complaints c
     JOIN assignments a ON c.complaint_id = a.complaint_id
     LEFT JOIN status_master s ON c.status_id = s.status_id
-    WHERE a.staff_id = ? AND c.status_id = ?
+    WHERE a.staff_id = ? AND a.is_active = 1 AND c.status_id = ?
     ORDER BY c.created_at DESC
 ";
 $stmt = $conn->prepare($sql);
@@ -100,4 +102,3 @@ if ($stmt) {
 </div>
 
 <?php include("../includes/footer.php"); ?>
-

@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . "/status_lookup.php";
+require_once __DIR__ . "/assignment_helper.php";
 
 /**
  * Return true if a status change is allowed.
@@ -87,7 +88,9 @@ function get_complaint_status_id(mysqli $conn, int $complaint_id): ?int
  */
 function is_assigned_to_staff(mysqli $conn, int $complaint_id, int $staff_id): bool
 {
-    $stmt = $conn->prepare("SELECT 1 FROM assignments WHERE complaint_id = ? AND staff_id = ? LIMIT 1");
+    ensure_assignment_active_schema($conn);
+
+    $stmt = $conn->prepare("SELECT 1 FROM assignments WHERE complaint_id = ? AND staff_id = ? AND is_active = 1 LIMIT 1");
     if (!$stmt) {
         return false;
     }

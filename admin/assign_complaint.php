@@ -5,6 +5,7 @@ require_once("../includes/status_lookup.php");
 require_once("../includes/workflow_helper.php");
 require_once("../includes/sla_escalation.php");
 require_once("../includes/csrf_helper.php");
+require_once("../includes/assignment_helper.php");
 
 if ($_SESSION['role_id'] != 1) {
     header("Location: ../auth/login.php");
@@ -27,6 +28,9 @@ $ID_REOPEN_AS  = get_status_id_or($conn, "Reopened - Assigned", 6);
 $ID_VERIFIED   = get_status_id_or($conn, "Verified", 7);
 $ID_ESCALATED  = get_status_id_or($conn, "Escalated", 8);
 $ID_DECLINED   = get_status_id_or($conn, "Declined", 9);
+$ID_IN_PROGRESS = get_status_id_or($conn, "In Progress", 10);
+
+ensure_assignment_active_schema($conn);
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
     require_csrf_token();
@@ -42,44 +46,22 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
     } elseif ($curr_status === $ID_PENDING) {
         set_flash_message('error', 'Please verify the complaint before assignment.');
     } elseif ($curr_status === $ID_REOPEN_AP) {
-        set_flash_message('error', 'Reopened complaint requires approval before reassignment.');
-    } elseif (!in_array($curr_status, [$ID_VERIFIED, $ID_ESCALATED], true)) {
+        set_flash_message('error', 'Reopened complaint requires approval before assignment.');
+    } elseif (in_array($curr_status, [$ID_RESOLVED, $ID_CLOSED, $ID_DECLINED], true)) {
         set_flash_message('error', 'This complaint is not eligible for assignment.');
+    } elseif (get_complaint_assignment($conn, $complaint_id)) {
+        set_flash_message('error', 'Complaint already assigned');
     } else {
-        // Check if already assigned to this staff
-        $check_stmt = $conn->prepare("SELECT assignment_id FROM assignments WHERE complaint_id = ? AND staff_id = ? LIMIT 1");
-        if ($check_stmt) {
-            $check_stmt->bind_param("ii", $complaint_id, $staff_id);
-            $check_stmt->execute();
-            $already = $check_stmt->get_result()->fetch_assoc();
-            $check_stmt->close();
-            if ($already) {
-                set_flash_message('error', 'Already assigned to this staff member.');
+        $assignmentResult = assign_complaint_to_staff($conn, $complaint_id, $staff_id, $admin_id);
+        if ($assignmentResult['ok']) {
+            $new_status = in_array($curr_status, [$ID_VERIFIED, $ID_REOPEN_AS, $ID_ESCALATED], true) ? $ID_ASSIGNED : $curr_status;
+            if (update_complaint_status_with_history($conn, $complaint_id, $new_status, $admin_id, 'Assigned to staff')) {
+                set_flash_message('success', $assignmentResult['message']);
             } else {
-                // Insert assignment
-                $ins = $conn->prepare("INSERT INTO assignments (complaint_id, staff_id, assigned_by) VALUES (?, ?, ?)");
-                if ($ins) {
-                    $ins->bind_param("iii", $complaint_id, $staff_id, $admin_id);
-                    $ok = $ins->execute();
-                    $ins->close();
-
-                    if ($ok) {
-                        // Update status: Verified/Escalated -> Assigned (or Reopened Assigned if you want a separate bucket)
-                        $new_status = $ID_ASSIGNED;
-                        if (update_complaint_status_with_history($conn, $complaint_id, $new_status, $admin_id, "Assigned to staff")) {
-                            set_flash_message('success', 'Complaint successfully assigned!');
-                        } else {
-                            set_flash_message('error', 'Complaint was assigned, but status history could not be updated.');
-                        }
-                    } else {
-                        set_flash_message('error', 'Failed to assign.');
-                    }
-                } else {
-                    set_flash_message('error', 'Database error while assigning.');
-                }
+                set_flash_message('error', 'Assignment was saved, but status history could not be updated.');
             }
         } else {
-            set_flash_message('error', 'Database error while checking assignments.');
+            set_flash_message('error', $assignmentResult['message']);
         }
     }
 }
@@ -195,19 +177,26 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                 </thead>
                 <tbody>
                     <?php
-                    // Fetch ALL complaints, and group assignments
+                    // Fetch all open complaints with their permanent assignment owner.
                     $query = "SELECT c.*, cat.category_name, s.status_name, 
-                              (SELECT GROUP_CONCAT(u.name SEPARATOR ', ') FROM assignments a JOIN users u ON a.staff_id=u.user_id WHERE a.complaint_id=c.complaint_id) as assigned_staff 
+                              assignment_info.staff_id AS assigned_staff_id,
+                              assignment_info.assigned_staff
                               FROM complaints c 
                               LEFT JOIN complaint_categories cat ON c.category_id=cat.category_id
                               LEFT JOIN status_master s ON c.status_id=s.status_id
-                              WHERE c.status_id IN ($ID_PENDING, $ID_REOPEN_AP, $ID_VERIFIED, $ID_ESCALATED)
+                              LEFT JOIN (
+                                  SELECT a.complaint_id, a.staff_id, u.name AS assigned_staff
+                                  FROM assignments a
+                                  JOIN users u ON a.staff_id = u.user_id
+                              ) assignment_info ON assignment_info.complaint_id = c.complaint_id
+                              WHERE c.status_id NOT IN ($ID_RESOLVED, $ID_CLOSED, $ID_DECLINED)
                               ORDER BY c.created_at DESC";
                     
                     $res = mysqli_query($conn, $query);
                     if(mysqli_num_rows($res) > 0) {
                         while ($r = mysqli_fetch_assoc($res)) {
-                            $assigned = $r['assigned_staff'] ? htmlspecialchars($r['assigned_staff']) : "<span class='text-danger fw-bold small'><i class='fas fa-triangle-exclamation me-1'></i>Unassigned</span>";
+                            $hasAssignment = !empty($r['assigned_staff_id']);
+                            $assigned = $hasAssignment ? htmlspecialchars($r['assigned_staff']) : "<span class='text-danger fw-bold small'><i class='fas fa-triangle-exclamation me-1'></i>Unassigned</span>";
                             $cid = (int)$r['complaint_id'];
                             $sid = (int)$r['status_id'];
                             
@@ -223,7 +212,7 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                                         <div class='small text-muted'>" . htmlspecialchars($r['category_name']) . " &bull; Reported " . date('M d', strtotime($r['created_at'])) . "</div>
                                     </td>
                                     <td>" . render_status_badge($display_status) . "</td>
-                                    <td class='small'>{$assigned}</td>
+                                    <td class='small'>" . ($hasAssignment ? "<div class='fw-bold text-primary'>Current: {$assigned}</div>" : $assigned) . "</td>
                                     <td class='text-end pe-4'>
                                         <div class='d-flex gap-2 justify-content-end align-items-center'>
                                             <a href='view_complaint.php?id={$r['complaint_id']}' class='btn btn-light btn-sm rounded-pill px-3 fw-bold' data-bs-toggle='tooltip' title='View Details'>
@@ -250,7 +239,7 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                                         <form method='POST' class='m-0'>
                                             " . csrf_input() . "
                                             <input type='hidden' name='complaint_id' value='{$cid}'>
-                                            <button type='submit' name='approve_reopen' class='btn btn-info btn-sm rounded-pill px-3 fw-bold confirm-action' data-confirm='Approve this reopened complaint for reassignment?'>
+                                            <button type='submit' name='approve_reopen' class='btn btn-info btn-sm rounded-pill px-3 fw-bold confirm-action' data-confirm='Approve this reopened complaint for assignment?'>
                                                 <i class='fas fa-user-shield me-1'></i> Approve
                                             </button>
                                         </form>
@@ -258,8 +247,12 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                                             <i class='fas fa-times me-1'></i> Decline
                                         </button>
                                       </div>";
+                            } elseif ($hasAssignment) {
+                                echo "<span class='badge rounded-pill bg-light text-muted border px-3 py-2'>
+                                        <i class='fas fa-lock me-1'></i>Already Assigned
+                                      </span>";
                             } else {
-                                // Verified / Escalated -> Assign
+                                // First-time assignment only.
                                 echo "<form method='POST' class='d-flex gap-2 m-0'>
                                         " . csrf_input() . "
                                         <input type='hidden' name='complaint_id' value='{$cid}'>
@@ -269,8 +262,8 @@ while ($s = mysqli_fetch_assoc($res_staff)) {
                                     echo "<option value='{$st['user_id']}'>" . htmlspecialchars($st['name']) . "</option>";
                                 }
                                 echo "          </select>
-                                        <button type='submit' name='assign' class='btn btn-primary btn-sm rounded-pill px-3 fw-bold' data-bs-toggle='tooltip' title='Submit Assignment'>
-                                            <i class='fas fa-user-plus'></i>
+                                        <button type='submit' name='assign' class='btn btn-primary btn-sm rounded-pill px-3 fw-bold' data-bs-toggle='tooltip' title='Assign Staff'>
+                                            <i class='fas fa-user-plus me-1'></i>Assign Staff
                                         </button>
                                       </form>";
                             }

@@ -5,6 +5,7 @@ require_once("../includes/status_lookup.php");
 require_once("../includes/sla_escalation.php");
 require_once("../includes/workflow_helper.php");
 require_once("../includes/csrf_helper.php");
+require_once("../includes/assignment_helper.php");
 
 if ($_SESSION['role_id'] != 1) {
     header("Location: ../auth/login.php");
@@ -23,46 +24,43 @@ $complaint_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 // Status IDs (fallback to existing numeric IDs)
 $ID_PENDING   = get_status_id_or($conn, "Pending", 1);
 $ID_ASSIGNED  = get_status_id_or($conn, "Assigned", 2);
+$ID_RESOLVED  = get_status_id_or($conn, "Resolved", 3);
+$ID_CLOSED    = get_status_id_or($conn, "Closed", 4);
 $ID_VERIFIED  = get_status_id_or($conn, "Verified", 7);
 $ID_ESCALATED = get_status_id_or($conn, "Escalated", 8);
 $ID_REOPEN_AP = get_status_id_or($conn, "Reopened - Pending Approval", 5);
+$ID_REOPEN_AS = get_status_id_or($conn, "Reopened - Assigned", 6);
+$ID_IN_PROGRESS = get_status_id_or($conn, "In Progress", 10);
+$ID_DECLINED = get_status_id_or($conn, "Declined", 9);
+
+ensure_assignment_active_schema($conn);
 
 // Handle Assignment Form Submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['assign'])) {
     require_csrf_token();
     $staff_id = (int)$_POST['staff_id'];
-    
-    // Check if already assigned
-    if (is_assigned_to_staff($conn, $complaint_id, $staff_id)) {
-        set_flash_message('error', 'Already assigned to this staff member.');
+
+    // Ensure verified before assignment (Feature #4 + #5)
+    $curr_status = get_complaint_status_id($conn, $complaint_id);
+
+    if ($curr_status === $ID_PENDING) {
+        set_flash_message('error', 'Please verify the complaint before assignment.');
+    } elseif ($curr_status === $ID_REOPEN_AP) {
+        set_flash_message('error', 'Reopened complaint requires approval before assignment.');
+    } elseif (in_array($curr_status, [$ID_RESOLVED, $ID_CLOSED, $ID_DECLINED], true)) {
+        set_flash_message('error', 'Complaint is not eligible for assignment.');
+    } elseif (get_complaint_assignment($conn, $complaint_id)) {
+        set_flash_message('error', 'Complaint already assigned');
     } else {
-        // Ensure verified before assignment (Feature #4 + #5)
-        $curr_status = get_complaint_status_id($conn, $complaint_id);
-
-        if ($curr_status === $ID_PENDING) {
-            set_flash_message('error', 'Please verify the complaint before assignment.');
-        } elseif ($curr_status === $ID_REOPEN_AP) {
-            set_flash_message('error', 'Reopened complaint requires approval before reassignment.');
-        } elseif (!in_array($curr_status, [$ID_VERIFIED, $ID_ESCALATED], true)) {
-            set_flash_message('error', 'Complaint is not eligible for assignment.');
-        } else {
-        $stmt = $conn->prepare("INSERT INTO assignments (complaint_id, staff_id, assigned_by) VALUES (?, ?, ?)");
-        if ($stmt) {
-            $stmt->bind_param("iii", $complaint_id, $staff_id, $admin_id);
-            $assigned = $stmt->execute();
-            $stmt->close();
-        } else {
-            $assigned = false;
-        }
-
-        if ($assigned) {
-            update_complaint_status_with_history($conn, $complaint_id, $ID_ASSIGNED, $admin_id, 'Assigned to staff');
-            set_flash_message('success', 'Complaint successfully assigned!');
+        $assignmentResult = assign_complaint_to_staff($conn, $complaint_id, $staff_id, $admin_id);
+        if ($assignmentResult['ok']) {
+            $new_status = in_array($curr_status, [$ID_VERIFIED, $ID_REOPEN_AS, $ID_ESCALATED], true) ? $ID_ASSIGNED : $curr_status;
+            update_complaint_status_with_history($conn, $complaint_id, $new_status, $admin_id, 'Assigned to staff');
+            set_flash_message('success', $assignmentResult['message']);
             echo "<script>window.location.href='view_complaint.php?id=$complaint_id';</script>";
             exit;
         } else {
-            set_flash_message('error', 'Failed to assign.');
-        }
+            set_flash_message('error', $assignmentResult['message']);
         }
     }
 }
@@ -105,18 +103,8 @@ if ($res_staff) {
     $res_staff->close();
 }
 
-// Fetch current assignments
-$assigned_staff = [];
-$as_res = $conn->prepare("SELECT u.name FROM assignments a JOIN users u ON a.staff_id = u.user_id WHERE a.complaint_id = ?");
-if ($as_res) {
-    $as_res->bind_param("i", $complaint_id);
-    $as_res->execute();
-    $assigned_result = $as_res->get_result();
-    while ($ar = mysqli_fetch_assoc($assigned_result)) {
-        $assigned_staff[] = $ar['name'];
-    }
-    $as_res->close();
-}
+// Fetch permanent assignment, if any.
+$assignment = get_complaint_assignment($conn, $complaint_id);
 ?>
 
 <!-- Header & Breadcrumbs -->
@@ -234,15 +222,14 @@ if ($as_res) {
             </div>
             <div class="card-body">
                 <div class="mb-4">
-                    <label class="text-muted small fw-bold text-uppercase d-block mb-2">Assigned Personnel</label>
+                    <label class="text-muted small fw-bold text-uppercase d-block mb-2">Current Assigned Staff</label>
                     <div class="d-flex flex-wrap gap-2">
                         <?php 
-                        if (!empty($assigned_staff)):
-                            foreach($assigned_staff as $name): ?>
-                                <span class="badge bg-white text-primary border border-primary-light rounded-pill px-3 py-2 fs-7 fw-bold shadow-sm">
-                                    <i class="fas fa-hard-hat me-1"></i><?= htmlspecialchars($name) ?>
-                                </span>
-                            <?php endforeach;
+                        if ($assignment): ?>
+                            <span class="badge bg-white text-primary border border-primary-light rounded-pill px-3 py-2 fs-7 fw-bold shadow-sm">
+                                <i class="fas fa-hard-hat me-1"></i><?= htmlspecialchars($assignment['staff_name']) ?>
+                            </span>
+                        <?php
                         else: ?>
                             <span class="text-danger fw-bold small"><i class="fas fa-triangle-exclamation me-1"></i>Currently Unassigned</span>
                         <?php endif; ?>
@@ -251,21 +238,27 @@ if ($as_res) {
 
                 <hr class="my-4 opacity-10">
 
-                <form method="POST">
-                    <?= csrf_input() ?>
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold text-uppercase text-muted">Assign New Staff</label>
-                        <select name="staff_id" class="form-select border-primary-light" required>
-                            <option value=''>Choose member...</option>
-                            <?php foreach ($staff_arr as $st): ?>
-                                <option value='<?= $st['user_id'] ?>'><?= htmlspecialchars($st['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <button type="submit" name="assign" class="btn btn-primary w-100 py-2 rounded-pill shadow-sm fw-bold">
-                        <i class="fas fa-paper-plane me-2"></i>Confirm Assignment
-                    </button>
-                </form>
+                <?php if ($assignment): ?>
+                    <span class="badge rounded-pill bg-light text-muted border px-3 py-2">
+                        <i class="fas fa-lock me-1"></i>Already Assigned
+                    </span>
+                <?php else: ?>
+                    <form method="POST">
+                        <?= csrf_input() ?>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold text-uppercase text-muted">Assign Staff</label>
+                            <select name="staff_id" class="form-select border-primary-light" required>
+                                <option value=''>Choose member...</option>
+                                <?php foreach ($staff_arr as $st): ?>
+                                    <option value='<?= $st['user_id'] ?>'><?= htmlspecialchars($st['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <button type="submit" name="assign" class="btn btn-primary w-100 py-2 rounded-pill shadow-sm fw-bold">
+                            <i class="fas fa-paper-plane me-2"></i>Confirm Assignment
+                        </button>
+                    </form>
+                <?php endif; ?>
             </div>
         </div>
 

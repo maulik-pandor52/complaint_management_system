@@ -6,6 +6,7 @@ require_once("../includes/status_lookup.php");
 require_once("../includes/workflow_helper.php");
 require_once("../includes/sla_escalation.php");
 require_once("../includes/csrf_helper.php");
+require_once("../includes/assignment_helper.php");
 
 if ($_SESSION['role_id'] != 2) {
     header("Location: ../auth/login.php");
@@ -17,12 +18,15 @@ include_once("../includes/flash_messages.php");
 
 $staff_id = $_SESSION['user_id'];
 $complaint_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+ensure_assignment_active_schema($conn);
+$ID_RESOLVED = get_status_id_or($conn, "Resolved", 3);
+$ID_CLOSED = get_status_id_or($conn, "Closed", 4);
 
 // Auto-escalate overdue complaints (Feature #2)
 run_sla_escalation($conn);
 
 // Verify assignment
-$check_assign = mysqli_query($conn, "SELECT * FROM assignments WHERE complaint_id='$complaint_id' AND staff_id='$staff_id'");
+$check_assign = mysqli_query($conn, "SELECT * FROM assignments WHERE complaint_id='$complaint_id' AND staff_id='$staff_id' AND is_active = 1");
 if (mysqli_num_rows($check_assign) == 0) {
     echo "<div class='content-area'><p>Complaint not found or not assigned to you.</p></div>";
     include("../includes/footer.php");
@@ -42,6 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['status_id'])) {
     $allowed_targets = $current_status !== null ? allowed_staff_status_targets($conn, $current_status) : [];
     if ($current_status === null) {
         set_flash_message('error', 'Complaint not found.');
+    } elseif (in_array($current_status, [$ID_RESOLVED, $ID_CLOSED], true)) {
+        set_flash_message('error', 'Resolved or closed complaints cannot be updated.');
     } elseif (!in_array($new_status, $allowed_targets, true)) {
         set_flash_message('error', 'Invalid status transition. Please follow the workflow.');
     } elseif ($remark === '') {
@@ -51,7 +57,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['status_id'])) {
         $ok2 = $ok1;
 
         // Action proof upload during resolution (Feature #6)
-        $ID_RESOLVED = get_status_id_or($conn, "Resolved", 3);
         if ($ok1 && $ok2 && $new_status === $ID_RESOLVED && !empty($_FILES['action_proof']['name'])) {
             $upload = uploadFile($_FILES['action_proof']);
             if ($upload['status']) {
@@ -207,6 +212,16 @@ $complaint = mysqli_fetch_assoc($result);
                 <h5 class="mb-0 fw-bold"><i class="fas fa-pen-to-square me-2 text-primary"></i>Maintenance Action Log</h5>
             </div>
             <div class="card-body">
+                <?php $allowed_ids = allowed_staff_status_targets($conn, (int)$complaint['status_id']); ?>
+                <?php if (empty($allowed_ids)): ?>
+                    <div class="text-center py-4">
+                        <div class="mb-3 text-success fs-2">
+                            <i class="fas fa-circle-check"></i>
+                        </div>
+                        <div class="fw-bold text-dark">No update action available</div>
+                        <div class="small text-muted mt-1">This complaint is already <?= htmlspecialchars($complaint['status_name']) ?>.</div>
+                    </div>
+                <?php else: ?>
                 <form method="POST" enctype="multipart/form-data" class="needs-validation" novalidate>
                     <?= csrf_input() ?>
                     <div class="form-group mb-4">
@@ -214,40 +229,35 @@ $complaint = mysqli_fetch_assoc($result);
                         <select name="status_id" class="form-control" required>
                             <?php
                             // Only allow workflow-legal staff options (Feature #3)
-                            $allowed_ids = allowed_staff_status_targets($conn, (int)$complaint['status_id']);
-                            if (empty($allowed_ids)) {
-                                echo "<option value='".(int)$complaint['status_id']."' selected>".htmlspecialchars($complaint['status_name'])."</option>";
+                            $placeholders = implode(',', array_fill(0, count($allowed_ids), '?'));
+                            $types = str_repeat('i', count($allowed_ids));
+
+                            // Build dynamic prepared statement safely
+                            $sql = "SELECT status_id, status_name FROM status_master WHERE status_id IN ($placeholders) ORDER BY status_id ASC";
+                            $stmt = $conn->prepare($sql);
+                            if ($stmt) {
+                                // bind_param needs references
+                                $params = [$types];
+                                foreach ($allowed_ids as $id) $params[] = $id;
+                                $refs = [];
+                                foreach ($params as $k => $v) $refs[$k] = &$params[$k];
+                                call_user_func_array([$stmt, 'bind_param'], $refs);
+
+                                $stmt->execute();
+                                $res = $stmt->get_result();
+                                while ($s = $res->fetch_assoc()) {
+                                    $sid = (int)$s['status_id'];
+                                    // Default to In Progress (10) if current is Assigned (2)
+                                    $is_default_target = ($sid == 10 && $complaint['status_id'] == 2);
+                                    $sel = ($sid == (int)$complaint['status_id'] || $is_default_target) ? "selected" : "";
+                                    echo "<option value='{$sid}' {$sel}>".htmlspecialchars($s['status_name'])."</option>";
+                                }
+                                $stmt->close();
                             } else {
-                                $placeholders = implode(',', array_fill(0, count($allowed_ids), '?'));
-                                $types = str_repeat('i', count($allowed_ids));
-
-                                // Build dynamic prepared statement safely
-                                $sql = "SELECT status_id, status_name FROM status_master WHERE status_id IN ($placeholders) ORDER BY status_id ASC";
-                                $stmt = $conn->prepare($sql);
-                                if ($stmt) {
-                                    // bind_param needs references
-                                    $params = [$types];
-                                    foreach ($allowed_ids as $id) $params[] = $id;
-                                    $refs = [];
-                                    foreach ($params as $k => $v) $refs[$k] = &$params[$k];
-                                    call_user_func_array([$stmt, 'bind_param'], $refs);
-
-                                    $stmt->execute();
-                                    $res = $stmt->get_result();
-                                    while ($s = $res->fetch_assoc()) {
-                                        $sid = (int)$s['status_id'];
-                                        // Default to In Progress (10) if current is Assigned (2)
-                                        $is_default_target = ($sid == 10 && $complaint['status_id'] == 2);
-                                        $sel = ($sid == (int)$complaint['status_id'] || $is_default_target) ? "selected" : "";
-                                        echo "<option value='{$sid}' {$sel}>".htmlspecialchars($s['status_name'])."</option>";
-                                    }
-                                    $stmt->close();
-                                } else {
-                                    // Fallback (should rarely happen)
-                                    foreach ($allowed_ids as $sid) {
-                                        $sel = ($sid == (int)$complaint['status_id']) ? "selected" : "";
-                                        echo "<option value='{$sid}' {$sel}>Status #{$sid}</option>";
-                                    }
+                                // Fallback (should rarely happen)
+                                foreach ($allowed_ids as $sid) {
+                                    $sel = ($sid == (int)$complaint['status_id']) ? "selected" : "";
+                                    echo "<option value='{$sid}' {$sel}>Status #{$sid}</option>";
                                 }
                             }
                             ?>
@@ -271,6 +281,7 @@ $complaint = mysqli_fetch_assoc($result);
                         <i class="fas fa-save me-2"></i>Commit Changes
                     </button>
                 </form>
+                <?php endif; ?>
             </div>
         </div>
 

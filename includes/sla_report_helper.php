@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/app_helper.php';
 require_once __DIR__ . '/status_lookup.php';
+require_once __DIR__ . '/assignment_helper.php';
 
 function format_sla_duration(int $seconds): string
 {
@@ -157,6 +158,8 @@ function earliest_sla_event_at(?string $firstAt, ?string $secondAt): ?string
 
 function get_live_sla_report_rows(mysqli $conn): array
 {
+    ensure_assignment_active_schema($conn);
+
     $ID_PENDING = get_status_id_or($conn, 'Pending', 1);
     $ID_RESOLVED = get_status_id_or($conn, 'Resolved', 3);
     $ID_CLOSED = get_status_id_or($conn, 'Closed', 4);
@@ -188,7 +191,7 @@ function get_live_sla_report_rows(mysqli $conn): array
             SELECT
                 ass.complaint_id,
                 MIN(ass.assigned_at) AS first_assignment_at,
-                GROUP_CONCAT(DISTINCT u.name ORDER BY u.name SEPARATOR ', ') AS assigned_staff
+                MAX(CASE WHEN ass.is_active = 1 THEN u.name ELSE NULL END) AS assigned_staff
             FROM assignments ass
             LEFT JOIN users u ON ass.staff_id = u.user_id
             GROUP BY ass.complaint_id

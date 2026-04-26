@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+require_once("../includes/assignment_helper.php");
 session_start();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -14,6 +15,7 @@ if (!isset($_SESSION['role_id']) || !isset($_SESSION['user_id'])) {
 
 $role_id = (int)$_SESSION['role_id'];
 $user_id = (int)$_SESSION['user_id'];
+ensure_assignment_active_schema($conn);
 
 $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 100;
 if ($limit <= 0 || $limit > 500) $limit = 100;
@@ -29,7 +31,7 @@ $types = "";
 if ($role_id === 2) {
     // Staff: only assigned complaints
     $sql .= " JOIN assignments a ON c.complaint_id = a.complaint_id";
-    $where[] = "a.staff_id = ?";
+    $where[] = "a.staff_id = ? AND a.is_active = 1";
     $types .= "i";
     $params[] = $user_id;
 } elseif ($role_id === 3) {

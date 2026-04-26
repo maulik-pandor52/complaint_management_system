@@ -5,6 +5,7 @@
  */
 
 include("../config/db.php");
+require_once("../includes/assignment_helper.php");
 session_start();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -18,6 +19,7 @@ if (!isset($_SESSION['role_id']) || !isset($_SESSION['user_id'])) {
 $role_id = (int)$_SESSION['role_id'];
 $user_id = (int)$_SESSION['user_id'];
 $complaint_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+ensure_assignment_active_schema($conn);
 
 if ($complaint_id <= 0) {
     http_response_code(400);
@@ -27,7 +29,7 @@ if ($complaint_id <= 0) {
 
 // Authorization check
 if ($role_id === 2) {
-    $chk = $conn->prepare("SELECT 1 FROM assignments WHERE complaint_id = ? AND staff_id = ? LIMIT 1");
+    $chk = $conn->prepare("SELECT 1 FROM assignments WHERE complaint_id = ? AND staff_id = ? AND is_active = 1 LIMIT 1");
     if (!$chk) {
         http_response_code(500);
         echo json_encode(['ok' => false, 'message' => 'Database error', 'data' => null]);
