@@ -5,6 +5,7 @@ require_once("../includes/app_helper.php");
 require_once("../includes/sla_report_helper.php");
 require_once("../includes/sla_escalation.php");
 
+
 if ($_SESSION['role_id'] != 1) {
     header("Location: ../auth/login.php");
     exit;

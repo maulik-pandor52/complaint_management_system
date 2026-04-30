@@ -13,7 +13,7 @@ function is_active($page, $current)
     <div class="sidebar-header">
         <div class="logo">
             <i class="fas fa-shield-halved"></i>
-            <div>ResovelX</div>
+            <div>ResolveX</div>
         </div>
     </div>
 

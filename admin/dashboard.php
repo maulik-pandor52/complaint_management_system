@@ -1,9 +1,9 @@
 <?php
-include("../config/db.php");
-include("../includes/auth.php");
+require_once("../config/db.php");
+require_once("../includes/auth.php");
 require_once("../includes/sla_escalation.php");
 
-if ($_SESSION['role_id'] != 1) {
+if (!isset($_SESSION['role_id']) || $_SESSION['role_id'] != 1) {
     header("Location: ../auth/login.php");
     exit;
 }
@@ -11,10 +11,20 @@ if ($_SESSION['role_id'] != 1) {
 // Auto-escalate overdue complaints (Feature #2)
 run_sla_escalation($conn);
 
+// Helper function to safely fetch counts
+function get_complaint_count($conn, $query) {
+    $result = mysqli_query($conn, $query);
+    if ($result) {
+        $row = mysqli_fetch_assoc($result);
+        return $row ? (int)$row['c'] : 0;
+    }
+    return 0;
+}
+
 // Stats
-$total = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints"))['c'];
-$pending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE status_id IN (1, 2, 5, 6 , 7, 10)"))['c'];
-$resolved = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) as c FROM complaints WHERE status_id IN (3, 4, 8, 9)"))['c'];
+$total = get_complaint_count($conn, "SELECT COUNT(*) as c FROM complaints");
+$pending = get_complaint_count($conn, "SELECT COUNT(*) as c FROM complaints WHERE status_id IN (1, 2, 5, 6, 7, 10)");
+$resolved = get_complaint_count($conn, "SELECT COUNT(*) as c FROM complaints WHERE status_id IN (3, 4, 8, 9)");
 
 include("../includes/header.php");  
 ?>
