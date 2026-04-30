@@ -1,16 +1,33 @@
 <?php
-$host = "localhost";
-$user = "root";
-$pass = "";
-$db   = "complaint_database";
+/**
+ * Database Connection Configuration
+ */
 
-$conn = @mysqli_connect($host, $user, $pass, $db);
+function getDBConnection(): mysqli {
+    static $conn = null;
 
-if (!$conn) {
-    error_log('Database connection failed: ' . mysqli_connect_error());
-    http_response_code(500);
-    exit('Database connection is temporarily unavailable. Please try again later.');
+    if ($conn === null) {
+        $host = "localhost";
+        $user = "root";
+        $pass = "";
+        $db   = "complaint_database";
+
+        // Enable internal error reporting for mysqli to throw exceptions
+        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+        try {
+            $conn = @mysqli_connect($host, $user, $pass, $db);
+            mysqli_set_charset($conn, 'utf8mb4');
+        } catch (mysqli_sql_exception $e) {
+            error_log('Database connection failed: ' . $e->getMessage());
+            http_response_code(500);
+            exit('Database connection is temporarily unavailable. Please try again later.');
+        }
+    }
+
+    return $conn;
 }
 
-mysqli_set_charset($conn, 'utf8mb4');
+// Global connection variable for legacy compatibility
+$conn = getDBConnection();
 ?>

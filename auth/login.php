@@ -1,6 +1,7 @@
 <?php
 session_start();
 include("../config/db.php");
+$conn = getDBConnection();
 require_once("../includes/app_helper.php");
 
 // Redirect if already logged in

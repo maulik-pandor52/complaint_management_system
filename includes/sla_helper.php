@@ -1,5 +1,5 @@
 <?php
-function checkSLA($created_at, $response_hours, $resolution_hours)
+function checkSLA(string $created_at, int $response_hours, int $resolution_hours)
 {
 
     $created = strtotime($created_at);

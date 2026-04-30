@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 include("../includes/auth.php");
 include("../includes/upload_helper.php");
 require_once("../includes/status_lookup.php");

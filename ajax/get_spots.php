@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 
 header('Content-Type: application/json; charset=utf-8');
 

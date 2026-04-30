@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 session_start();
 require_once("../includes/status_lookup.php");
 

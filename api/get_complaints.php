@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 require_once("../includes/assignment_helper.php");
 session_start();
 

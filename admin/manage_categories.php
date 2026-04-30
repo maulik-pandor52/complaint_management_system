@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 include("../includes/auth.php");
 include("../includes/header.php");
 include_once("../includes/flash_messages.php");

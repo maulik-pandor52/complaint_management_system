@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 include("../includes/auth.php");
 require_once("../includes/app_helper.php");
 require_once("../includes/report_summary_helper.php");

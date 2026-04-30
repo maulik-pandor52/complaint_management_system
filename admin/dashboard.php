@@ -1,5 +1,6 @@
 <?php
 require_once("../config/db.php");
+$conn = getDBConnection();
 require_once("../includes/auth.php");
 require_once("../includes/sla_escalation.php");
 

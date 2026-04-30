@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 
 // Note for this personalized build (U = 38):
 // duplicate checking is kept as a usability feature only.

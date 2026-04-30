@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 include("../includes/auth.php");
 
 if ($_SESSION['role_id'] != 3 && !isset($_SESSION['role_id'])) {

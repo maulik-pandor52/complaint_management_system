@@ -1,5 +1,6 @@
 <?php
 include("../config/db.php");
+$conn = getDBConnection();
 include("../includes/auth.php");
 require_once("../includes/csrf_helper.php");
 include("../includes/header.php");
